@@ -8,7 +8,7 @@
 絵・動き・文字・効果音はすべてプログラムで作る（素材ファイルは使わない。フォントだけ fonts/ に同梱）。
 台本の文字は、*で囲んだところを黄色にする（例：150mは*どこから*測る？）。
 """
-import csv, datetime, io, json, math, os, re, subprocess, sys, urllib.request, wave
+import csv, datetime, io, json, math, os, re, subprocess, sys, unicodedata, urllib.request, wave
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -338,6 +338,29 @@ def render(sc, out_path):
     os.remove(tmp_wav)
 
 # ---------- 台本シート（CSV）→ 作る分を選ぶ ----------
+VARIANTS = {"塡": "填", "剝": "剥", "頰": "頬", "𠮟": "叱"}
+_CHARS = None
+
+def safe_text(s):
+    """動画のフォント（fonts/chars.txt）に無い文字を、近い文字に置き換える。置き換えられなかった文字も返す。"""
+    global _CHARS
+    if _CHARS is None:
+        p = os.path.join(HERE, "fonts", "chars.txt")
+        _CHARS = set(open(p, encoding="utf-8").read()) if os.path.exists(p) else set()
+    if not _CHARS:
+        return s, []
+    out, bad = [], []
+    for ch in str(s):
+        if ch in _CHARS or ch in "*\n ":
+            out.append(ch)
+            continue
+        alt = VARIANTS.get(ch) or unicodedata.normalize("NFKC", ch)
+        if alt and all(c in _CHARS for c in alt):
+            out.append(alt)
+        else:
+            out.append(ch); bad.append(ch)
+    return "".join(out), bad
+
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
 def jst_today():
@@ -411,6 +434,12 @@ def _main(st):
               "c": r.get("選択肢C", ""), "answer": r.get("正解", ""), "trap": r.get("ひっかけ", "")}
         if not (sc["q1"] and sc["a"] and sc["b"] and sc["c"] and sc["trap"] and sc["answer"].strip().upper() in ("A", "B", "C")):
             print("台本が足りないので見送り：", vid); st["見送った台本"].append(vid)
+            continue
+        bad = []
+        for k in ("q1", "q2", "a", "b", "c", "trap"):
+            sc[k], b = safe_text(sc[k]); bad += b
+        if bad:
+            print("動画の文字に無いので見送り：", vid, "".join(bad)); st["見送った台本"].append(vid + "（使えない文字：" + "".join(sorted(set(bad))) + "）")
             continue
         try:
             render(sc, out)
