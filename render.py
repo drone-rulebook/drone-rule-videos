@@ -11,6 +11,8 @@
 import csv, datetime, io, json, math, os, re, subprocess, sys, urllib.request, wave
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import music  # BGM（music.py）
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 W, H, S = 720, 1280, 2
@@ -275,23 +277,49 @@ def build_audio(path):
     def tone(f, dur, dec, harm=0.25):
         n = int(dur * SR); tt = np.arange(n) / SR
         return (np.sin(2 * math.pi * f * tt) + harm * np.sin(4 * math.pi * f * tt)) * env(n, 0.004, dec)
-    add(0.0, swoosh(), 0.22); add(0.2, pop(660), 0.45)
+    add(0.0, swoosh(), 0.22); add(0.2, pop(659.26), 0.45)
     add(1.0, swoosh(), 0.18)
     for i, ct in enumerate(CARD_T):
-        add(ct + 0.05, pop(740 + 120 * i), 0.38)
+        add(ct + 0.05, pop((783.99, 987.77, 1174.66)[i % 3]), 0.38)  # ソ・シ・レ（BGMの和音に合わせる）
     seg = (T_COUNT1 - T_COUNT0) / 3
-    for k in range(3):
-        add(T_COUNT0 + k * seg, tick(), 0.5)
+    ticks = [T_COUNT0 + k * seg for k in range(3)]
+    for tk in ticks:
+        add(tk, tick(), 0.5)
     add(T_REVEAL, tone(1046.5, 0.5, 0.18), 0.28); add(T_REVEAL + 0.12, tone(1568.0, 0.7, 0.25), 0.28)
     add(T_WIPE0, swoosh(0.4), 0.25)
     for f in (523.25, 659.25, 783.99):
         add(T_SWITCH + 0.1, tone(f, 1.0, 0.35, 0.1), 0.12)
-    buf = buf[: int(SR * DUR)]
-    buf = buf / max(1e-9, np.abs(buf).max()) * 0.85
-    pcm = (np.clip(buf, -1, 1) * 32767).astype(np.int16)
+    sfx = buf[: int(SR * DUR)]
+    sfx = sfx / max(1e-9, np.abs(sfx).max()) * 0.8
+    if BGM:
+        ml, mr = music.build_music(SR, DUR, T_COUNT0, T_REVEAL, ticks)
+        duck = sfx_duck(sfx)                      # 効果音が鳴るあいだは、BGMを少し下げる
+        ml, mr = ml * duck, mr * duck
+        g = 10 ** ((BGM_LUFS - music.loudness(ml, mr, SR)) / 20)
+        left, right = sfx + ml * g, sfx + mr * g
+    else:
+        left, right = sfx.copy(), sfx.copy()
+    g = 10 ** ((MIX_LUFS - music.loudness(left, right, SR)) / 20)
+    left, right = music.limit(left * g, right * g, SR)
+    pcm = (np.stack([left, right], axis=1) * 32767).astype(np.int16)
     with wave.open(path, "wb") as w:
         w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR)
-        w.writeframes(np.stack([pcm, pcm], axis=1).tobytes())
+        w.writeframes(pcm.tobytes())
+
+BGM = True          # BGM を入れる
+BGM_LUFS = -20.0    # BGM だけの大きさ（効果音より控えめに）
+MIX_LUFS = -15.0    # 仕上がりの大きさ（YouTube の基準 -14 より少し小さめ）
+
+def sfx_duck(sfx, depth=0.45):
+    hop = int(0.005 * SR)
+    nf = (len(sfx) + hop - 1) // hop
+    pk = np.array([np.abs(sfx[i * hop:(i + 1) * hop]).max(initial=0.0) for i in range(nf)])
+    a = np.exp(-hop / SR / 0.15)
+    env_, cur = np.zeros(nf), 0.0
+    for i in range(nf):
+        cur = max(pk[i], a * cur); env_[i] = cur
+    g = 1.0 - depth * np.clip(env_ / 0.5, 0.0, 1.0)
+    return np.interp(np.arange(len(sfx)) / hop, np.arange(nf) + 0.5, g)
 
 def render(sc, out_path):
     v = Video(sc)
