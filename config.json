@@ -1,0 +1,5 @@
+{
+  "csv_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQOSJ6oOpASlTPLC6cvC86WLITCxOzcAzuHVlNRVTDL1c1tOSfkBg7N8Vy9fimJXvWMdxdPT5sLjyv4/pub?gid=1617903465&single=true&output=csv",
+  "days_ahead": 3,
+  "keep_days": 10
+}
