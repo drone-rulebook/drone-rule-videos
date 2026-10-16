@@ -1,0 +1,62 @@
+name: サイトをつくる
+
+on:
+  schedule:
+    - cron: "37 10 * * *"   # 毎日 19時37分（日本時間。18時台のショート公開の後）
+  push:                      # サイトの部品を変えたときにも作り直す
+    branches: [main]
+    paths:
+      - "site/**"
+      - "fonts/**"
+      - "tests/sample.csv"
+      - "tests/test_site.py"
+      - ".github/workflows/site.yml"
+  workflow_dispatch:         # 手で動かすとき（Actions の画面の「Run workflow」）
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Pythonの部品を入れる
+        run: pip install -q pillow
+
+      - name: 見本でサイトの作りを確かめる
+        run: python tests/test_site.py
+
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      - name: 台本シートからサイトをつくる
+        env:
+          SITE_URL: ${{ steps.pages.outputs.base_url }}/
+        run: python site/build.py --out _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

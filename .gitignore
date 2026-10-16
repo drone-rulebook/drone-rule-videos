@@ -1,3 +1,4 @@
 __pycache__/
 *.wav
 *.part.mp4
+_site/
