@@ -1,10 +1,8 @@
 {
   "_説明": "サイトの文言・色・リンクはここにまとめています。別のテーマで使うときは、このファイルを書きかえます。{n} {total} {url} はサイトが自動で数字やURLに置きかえます。",
-
   "site_name": "ドローンのルール帳",
   "site_url": "https://drone-rulebook.github.io/drone-rule-videos/",
   "lang": "ja",
-
   "texts": {
     "tagline": "二等無人航空機操縦士（ドローン国家資格）の学科の「ひっかけ問題」",
     "intro": "ドローン国家資格（二等無人航空機操縦士）の学科で、まちがえやすい「ひっかけ問題」をスマホで解ける無料の練習サイトです。1問ずつ答えて、ひっかけのポイントをその場で確かめられます。",
@@ -17,7 +15,6 @@
     "note_label": "noteの問題集を見る",
     "note_heading": "もっと練習したい人へ",
     "note_text": "ひっかけ問題をまとめた問題集をnoteで出しています（有料）。",
-
     "quiz_title": "10問ミニ模試",
     "quiz_description": "ドローン国家資格（二等無人航空機操縦士）の学科の「ひっかけ問題」から、最大10問を出題するミニ模試。答えるとすぐに正誤とひっかけのポイントがわかります。",
     "quiz_lead": "ひっかけ問題から最大{total}問を出します。1問ずつ答えると、その場で正解とひっかけのポイントがわかります。",
@@ -34,7 +31,6 @@
     "quiz_retry": "もう一度ちょうせんする",
     "share_label": "Xで結果をシェア",
     "share_text": "ドローン国家資格（二等）学科のひっかけ問題ミニ模試で {total}問中 {n}問 正解でした！ #ドローン国家資格",
-
     "question_label": "問題",
     "show_answer": "正解を見る",
     "answer_label": "正解",
@@ -48,20 +44,23 @@
     "all_heading": "すべての問題",
     "back_home": "トップへ",
     "question_description": "{title}｜ドローン国家資格（二等無人航空機操縦士）学科の「ひっかけ問題」。3択に答えて、ひっかけのポイントを確かめよう。",
-
     "footer_source": "国土交通省『無人航空機の飛行の安全に関する教則』（第5版）にもとづいて作成。国の機関とは関係のない非公式の学習サイトです。",
     "footer_updated": "最終更新日：{date}",
     "og_label": "二等学科 ひっかけ問題",
     "not_found_title": "ページが見つかりません",
-    "not_found_text": "問題の番号が変わったか、ページが無くなった可能性があります。"
+    "not_found_text": "問題の番号が変わったか、ページが無くなった可能性があります。",
+    "kaisetsu_label": "解説",
+    "basis_label": "根拠",
+    "basis_prefix": "教則（第5版）",
+    "kijou_link": "机上試験の練習問題（4択・無料）",
+    "kijou_q_label": "問{n}",
+    "kijou_plan_label": "飛行計画書"
   },
-
   "links": {
     "x": "https://x.com/DroneSecond_x",
     "note": "https://note.com/drone_second/n/n4f61cd374d8f",
     "share_base": "https://x.com/intent/tweet"
   },
-
   "colors": {
     "bg": "#f4f6fa",
     "card": "#ffffff",
@@ -78,11 +77,9 @@
     "ng_bg": "#fbe6e4",
     "border": "#d7dce6"
   },
-
   "quiz_size": 10,
   "latest_count": 10,
   "others_count": 5,
-
   "og": {
     "bg": "#13213c",
     "bg2": "#243a62",

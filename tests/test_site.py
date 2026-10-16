@@ -89,8 +89,25 @@ class SiteTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(OUT, "og", "q", "Q016.png")))  # フォントに無い文字 → 共通の画像
         self.assertIn('content="https://drone-rulebook.github.io/drone-rule-videos/og/site.png"', read("q", "Q016", "index.html"))
         sm = read("sitemap.xml")
-        self.assertEqual(sm.count("<loc>"), 3 + 11)
+        self.assertEqual(sm.count("<loc>"), 3 + 11 + (1 if os.path.exists(os.path.join(ROOT, "site", "kijou.json")) else 0))
         self.assertIn("Sitemap: https://drone-rulebook.github.io/drone-rule-videos/sitemap.xml", read("robots.txt"))
+
+    def test_机上試験(self):
+        if not os.path.exists(os.path.join(ROOT, "site", "kijou.json")):
+            self.skipTest("kijou.json なし")
+        k = read("kijou", "index.html")
+        self.assertEqual(k.count('class="card kq"'), 4)
+        self.assertIn('<table class="plan">', k)
+        self.assertEqual(k.count('<span class="k">①</span>'), 4)
+        self.assertIn('href="kijou/"', read("index.html"))
+        self.assertNotIn("**", k)
+
+    def test_解説と根拠(self):
+        s = read("q", "Q001", "index.html")
+        self.assertIn("海抜高度ではありません", s)
+        self.assertNotIn("Note", s.split("<footer")[0].split("note_heading")[0].replace("note.com", ""))
+        self.assertIn("教則（第5版） 第3章 3.1.2 a.", s)
+        self.assertNotIn("✅", s)
 
 
 if __name__ == "__main__":

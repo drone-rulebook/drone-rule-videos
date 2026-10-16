@@ -76,6 +76,8 @@ def load_questions(raw):
             "date": parse_date(r.get("公開予定日")),
             "video": video if VIDEO_RE.match(video) else "",
             "posted": r.get("状態") == "投稿済み",
+            "kaisetsu": clean_kaisetsu(r.get("解説", "")),
+            "basis": r.get("根拠", "").strip(),
         }
         if qid in best:
             log["重なり"].append(qid)
@@ -83,6 +85,19 @@ def load_questions(raw):
                 continue
         best[qid] = q
     return list(best.values()), log
+
+EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D]")
+
+def clean_kaisetsu(s):
+    """Xの答え合わせの文（クイズDB の X_Post2）を、サイト用の解説の行にする。
+    1行目の「正解X：…」（記号の並びがサイトと違うことがある）と、note・プロフィールへの誘導の行は外す。"""
+    out = []
+    for line in str(s or "").replace("\r", "").split("\n"):
+        line = EMOJI_RE.sub("", line).strip()
+        if not line or re.match(r"^正解\s*[A-CＡ-Ｃ]?\s*[：:]", line) or re.search(r"note|ノート|プロフ", line, re.I):
+            continue
+        out.append(line)
+    return out
 
 def rank(q):
     """問題IDが重なったときの優先順（小さいほど優先）：動画がある → 投稿済み → 公開予定日が早い"""
@@ -161,6 +176,12 @@ details.reveal[open] summary{{display:none}}
 .answer .res.ok{{color:{c['ok']}}}
 .answer .res.ng{{color:{c['ng']}}}
 .trap{{margin:8px 0 0}}
+.basis{{margin:10px 0 0;font-size:13px;color:{c['muted']}}}
+table.plan{{width:100%;border-collapse:collapse;font-size:15px;line-height:1.55}}
+table.plan th,table.plan td{{text-align:left;vertical-align:top;padding:8px 6px;border-bottom:1px solid {c['border']}}}
+table.plan th{{white-space:nowrap;color:{c['muted']};font-weight:700;width:6.5em}}
+ul.ex{{margin:6px 0 0;padding-left:1.2em}}
+ul.ex li{{margin:0 0 6px}}
 ul.list{{list-style:none;padding:0;margin:0;background:{c['card']};border:1px solid {c['border']};border-radius:12px;overflow:hidden}}
 ul.list li+li{{border-top:1px solid {c['border']}}}
 ul.list a{{display:block;padding:12px 14px;text-decoration:none;color:{c['text']}}}
@@ -200,6 +221,9 @@ class Site:
         future.sort(key=lambda q: (q["date"], q["id"]))
         self.qs, self.past = past + future, past
         self.og_ok = set()
+        kp = os.path.join(HERE, "kijou.json")
+        self.kijou_data = json.load(open(kp, encoding="utf-8")) if os.path.exists(kp) else None
+        self.has_kijou = False
 
     # --- 共通の枠 ---
     def page(self, path, title, desc, body, og, script=""):
@@ -284,6 +308,7 @@ class Site:
         body = f"""<h1>{esc(t['tagline'])}</h1>
 <p class="lead">{esc(t['intro'])}</p>
 <a class="btn btn-main" href="quiz/">{esc(t['start_quiz'])}</a>
+{f'<a class="btn btn-line" href="kijou/">{esc(t["kijou_link"])}</a>' if self.kijou_data else ''}
 <h2>{esc(t['latest_heading'])}</h2>
 <ul class="list">{''.join(self.item(q, '') for q in latest)}</ul>
 <a class="more" href="q/">{esc(t['all_heading'])}（{len(self.qs)}問）</a>
@@ -323,7 +348,7 @@ class Site:
 <details class="reveal" id="reveal"><summary class="btn btn-main">{esc(t['show_answer'])}</summary>
 <div class="answer" id="answer" tabindex="-1"><p class="res" id="res"></p>
 <p><b>{esc(t['answer_label'])}：{L[q['answer']]}</b>　{rich(q['choices'][q['answer']])}</p>
-<p class="trap"><span class="label">{esc(t['trap_label'])}</span><br>{rich(q['trap'])}</p></div></details>
+<p class="trap"><span class="label">{esc(t['trap_label'])}</span><br>{rich(q['trap'])}</p>{self.extra(q)}</div></details>
 </section>
 <h2>{esc(t['short_heading'])}</h2>
 <div class="short">{short}</div>
@@ -343,12 +368,21 @@ d.addEventListener("toggle",function(){{if(d.open)for(var j=0;j<bs.length;j++){{
         desc = fill(t["question_description"], title=plain(q["title"]))
         self.page(f"q/{q['id']}/", plain(q["title"]), desc, body, self.og_path(q), script)
 
+    def extra(self, q):
+        """解説と根拠（シートに列があるときだけ）"""
+        t, out = self.t, ""
+        if q.get("kaisetsu"):
+            out += f'<p class="trap"><span class="label">{esc(t["kaisetsu_label"])}</span><br>{"<br>".join(esc(l) for l in q["kaisetsu"])}</p>'
+        if q.get("basis"):
+            out += f'<p class="basis">{esc(t["basis_label"])}：{esc(t["basis_prefix"])} {esc(q["basis"])}</p>'
+        return out
+
     def quiz(self):
         t = self.t
         size = int(self.cfg.get("quiz_size", 10))
         total = min(size, len(self.qs))
         data = [{"id": q["id"], "title": plain(q["title"]), "q": self.qtext(q), "c": [rich(c) for c in q["choices"]],
-                 "a": q["answer"], "trap": rich(q["trap"])} for q in self.qs]
+                 "a": q["answer"], "trap": rich(q["trap"]), "x": self.extra(q)} for q in self.qs]
         js_data = json.dumps(data, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
         texts = {k: t[k] for k in ("quiz_next", "quiz_finish", "quiz_correct", "quiz_wrong", "quiz_answer_is", "quiz_score",
                                    "quiz_all_correct", "trap_label", "share_text")}
@@ -365,7 +399,7 @@ d.addEventListener("toggle",function(){{if(d.open)for(var j=0;j<bs.length;j++){{
 <div class="q" id="qtext"></div>
 <ol class="choices" id="qchoices"></ol>
 <div class="answer hide" id="fb" tabindex="-1"><p class="res" id="fbres"></p><p id="fbans"></p>
-<p class="trap"><span class="label">{esc(t['trap_label'])}</span><br><span id="fbtrap"></span></p></div>
+<p class="trap"><span class="label">{esc(t['trap_label'])}</span><br><span id="fbtrap"></span></p><div id="fbx"></div></div>
 </div>
 <button type="button" class="btn btn-main hide" id="next"></button>
 </section>
@@ -407,7 +441,7 @@ function answer(k){{
   if(ok)score++;else missed.push(q);
   $("fbres").className="res "+(ok?"ok":"ng");$("fbres").textContent=ok?T.quiz_correct:T.quiz_wrong;
   $("fbans").innerHTML="<b>"+f(T.quiz_answer_is,{{letter:L[q.a]}})+"</b>　"+q.c[q.a];
-  $("fbtrap").innerHTML=q.trap;
+  $("fbtrap").innerHTML=q.trap;$("fbx").innerHTML=q.x||"";
   $("fb").classList.remove("hide");
   $("barfill").style.width=((i+1)/set.length*100)+"%";
   var nx=$("next");nx.textContent=i+1<set.length?T.quiz_next:T.quiz_finish;nx.classList.remove("hide");
@@ -432,6 +466,41 @@ start();
 </script>"""
         self.page("quiz/", t["quiz_title"], t["quiz_description"], body, "og/quiz.png", script)
 
+    def kijou(self, k):
+        """机上試験の練習問題（site/kijou.json があるときだけ）。表を読んで4択に答え、その場で正解と解説を出す"""
+        t = self.t
+        M = "①②③④"
+        rows = "".join(f"<tr><th>{esc(a)}</th><td>{esc(b)}</td></tr>" for a, b in k["plan"])
+        qs = ""
+        for n, q in enumerate(k["questions"], 1):
+            ch = "".join(f'<li><button type="button" class="choice" data-i="{j}"><span class="k">{M[j]}</span><span>{esc(c)}</span></button></li>'
+                         for j, c in enumerate(q["c"]))
+            ex = "".join(f"<li>{esc(e)}</li>" for e in q["ex"])
+            qs += f"""<section class="card kq" data-a="{int(q['a'])}">
+<div class="label">{esc(fill(t['kijou_q_label'], n=n))}</div>
+<div class="q" style="font-size:17px">{esc(q['q'])}</div>
+<ol class="choices">{ch}</ol>
+<details class="reveal"><summary class="btn btn-main">{esc(t['show_answer'])}</summary>
+<div class="answer" tabindex="-1"><p class="res"></p><p><b>{esc(t['answer_label'])}：{M[int(q['a'])]}</b></p><ul class="ex">{ex}</ul></div></details>
+</section>"""
+        body = f"""<h1>{esc(k['title'])}</h1>
+<p class="lead">{esc(k['lead'])}</p>
+<section class="card"><div class="label">{esc(t['kijou_plan_label'])}</div><table class="plan">{rows}</table></section>
+{qs}
+<section class="card note"><h2 style="margin-top:0">{esc(k['paid_heading'])}</h2><p>{esc(k['paid_text'])}</p>
+<a class="btn btn-line" href="{esc(self.links['x'])}" rel="noopener">{esc(t['x_label'])}</a></section>
+<a class="btn btn-main" href="../quiz/">{esc(t['start_quiz'])}</a>"""
+        script = f"""<script>
+(function(){{var ok={json.dumps(t['quiz_correct'], ensure_ascii=False)},ng={json.dumps(t['quiz_wrong'], ensure_ascii=False)};
+document.querySelectorAll(".kq").forEach(function(sec){{var A=+sec.getAttribute("data-a"),bs=sec.querySelectorAll(".choice"),d=sec.querySelector("details"),r=sec.querySelector(".res");
+function lock(){{for(var j=0;j<bs.length;j++){{bs[j].disabled=true;if(j===A)bs[j].classList.add("ok");}}}}
+bs.forEach(function(b){{b.addEventListener("click",function(){{var k=+b.getAttribute("data-i");lock();if(k!==A)b.classList.add("ng");
+r.className="res "+(k===A?"ok":"ng");r.textContent=k===A?ok:ng;d.open=true;sec.querySelector(".answer").focus({{preventScroll:true}});}});}});
+d.addEventListener("toggle",function(){{if(d.open)lock();}});}});}})();
+</script>"""
+        self.page("kijou/", k["title"], k["lead"], body, "og/site.png", script)
+        self.has_kijou = True
+
     def not_found(self):
         t = self.t
         body = (f'<h1>{esc(t["not_found_title"])}</h1><p>{esc(t["not_found_text"])}</p>'
@@ -444,7 +513,7 @@ start();
 
     def seo_files(self):
         d = self.today.isoformat()
-        urls = [(self.url, d), (self.url + "quiz/", d), (self.url + "q/", d)] + [(self.url + f"q/{q['id']}/", None) for q in self.qs]
+        urls = [(self.url, d), (self.url + "quiz/", d), (self.url + "q/", d)] + ([(self.url + "kijou/", d)] if self.has_kijou else []) + [(self.url + f"q/{q['id']}/", None) for q in self.qs]
         xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
         for u, lm in urls:
             xml.append(f"<url><loc>{esc(u)}</loc>" + (f"<lastmod>{lm}</lastmod>" if lm else "") + "</url>")
@@ -489,6 +558,8 @@ def main():
     site.home()
     site.all_list()
     site.quiz()
+    if site.kijou_data:
+        site.kijou(site.kijou_data)
     for i, q in enumerate(site.qs):
         site.question(i, q)
     site.not_found()
