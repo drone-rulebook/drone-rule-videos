@@ -71,6 +71,10 @@ jobs:
           git commit -q -m "動画を作成 $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M')"
           for i in 1 2 3; do
             if git pull -q --rebase && git push -q; then exit 0; fi
+            git rebase --abort 2>/dev/null || true
             sleep 10
           done
-          exit 1
+          # ほかの実行（同じ時間に動いた回）とぶつかったときは、この回の結果を捨てる。次の回で作り直す
+          # （今日の動画が無いままなら、スプレッドシートのスクリプトが22時台にメールで知らせる）
+          echo "::warning::ほかの実行とぶつかったため、この回の結果は置けませんでした（次の回で作り直します）"
+          exit 0
