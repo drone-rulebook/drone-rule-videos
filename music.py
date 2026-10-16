@@ -245,8 +245,12 @@ def reverb_ir(sr, rng, rt60=1.5):
 
 
 # ---------- 曲の組み立て ----------
-def build_music(sr, dur, count0, reveal, ticks, seed=11):
-    """BGM（左右2ch、長さ dur 秒）を返す。count0：カウントダウン開始、reveal：正解の瞬間、ticks：時計の音の時刻。"""
+def build_music(sr, dur, count0, reveal, ticks, seed=11, mix=None):
+    """BGM（左右2ch、長さ dur 秒）を返す。count0：カウントダウン開始、reveal：正解の瞬間、ticks：時計の音の時刻。
+    mix：楽器ごとの音量の倍率（例 {"KICK": 0.6}）。見た目の型ごとに少し雰囲気を変えるのに使う。"""
+    g = {"EP": G_EP, "PAD": G_PAD, "BASS": G_BASS, "ARP": G_ARP, "KICK": G_KICK, "CLAP": G_CLAP, "HAT": G_HAT, "CRASH": G_CRASH}
+    for k, v in (mix or {}).items():
+        g[k] *= v
     rng = np.random.default_rng(seed)
     mx = Mixer(sr, dur)
     gap = reveal - 0.08  # 正解の直前に一瞬だけ音を止める
@@ -268,30 +272,30 @@ def build_music(sr, dur, count0, reveal, ticks, seed=11):
         c = CHORDS[name]
         final = name == "Cend"
         # エレピ：頭と「ウラ」で刻む
-        mx.add(t0, ep_chord(c["ep"], length if final else length - 0.04, sr, vel=0.85), G_EP, rev=0.35)
+        mx.add(t0, ep_chord(c["ep"], length if final else length - 0.04, sr, vel=0.85), g["EP"], rev=0.35)
         if length >= 1.0 and not final:
-            mx.add(t0 + 0.75, ep_chord(c["ep"], 0.18, sr, vel=0.5), G_EP, rev=0.35)
+            mx.add(t0 + 0.75, ep_chord(c["ep"], 0.18, sr, vel=0.5), g["EP"], rev=0.35)
         # パッド
-        mx.add(t0, pad_chord(c["ep"], length, sr, bright=0.5, attack=0.12, release=0.25), G_PAD, rev=0.3)
+        mx.add(t0, pad_chord(c["ep"], length, sr, bright=0.5, attack=0.12, release=0.25), g["PAD"], rev=0.3)
         # ベース
         b = c["bass"]
         if final:
-            mx.add(t0, bass_note(hz(b), length - 0.15, sr), G_BASS)
+            mx.add(t0, bass_note(hz(b), length - 0.15, sr), g["BASS"])
         else:
-            mx.add(t0, bass_note(hz(b), min(0.42, length - 0.05), sr), G_BASS)
+            mx.add(t0, bass_note(hz(b), min(0.42, length - 0.05), sr), g["BASS"])
             if length >= 1.0:
-                mx.add(t0 + 0.5, bass_note(hz(b), 0.2, sr, vel=0.7), G_BASS)
-                mx.add(t0 + 0.75, bass_note(hz(b + 12), 0.2, sr, vel=0.75), G_BASS)
+                mx.add(t0 + 0.5, bass_note(hz(b), 0.2, sr, vel=0.7), g["BASS"])
+                mx.add(t0 + 0.75, bass_note(hz(b + 12), 0.2, sr, vel=0.75), g["BASS"])
         # マリンバの分散和音
         arp = c["arp"]
         if final:
             for j, m in enumerate(arp):
-                mx.add(t0 + 0.125 * j, marimba(hz(m), sr, 0.8), G_ARP, pan=(-0.3, 0.3)[j % 2], rev=0.4)
+                mx.add(t0 + 0.125 * j, marimba(hz(m), sr, 0.8), g["ARP"], pan=(-0.3, 0.3)[j % 2], rev=0.4)
         else:
             vel_b = 1.0 if sec == "B" else 0.8
             for dt, idx, v in ((0.0, 0, 0.85), (0.25, 2, 0.55), (0.5, 1, 0.7), (0.75, 3, 0.55)):
                 if dt < length - 0.01:
-                    mx.add(t0 + dt, marimba(hz(arp[idx]), sr, v * vel_b), G_ARP, pan=(-0.25, 0.25)[idx % 2], rev=0.4)
+                    mx.add(t0 + dt, marimba(hz(arp[idx]), sr, v * vel_b), g["ARP"], pan=(-0.25, 0.25)[idx % 2], rev=0.4)
 
     # リズム（はじめの部分）
     def groove(t_from, t_to, energy):
@@ -299,37 +303,37 @@ def build_music(sr, dur, count0, reveal, ticks, seed=11):
         while s < t_to - 1e-9:
             pos = round((s - t_from) / 0.25) % 4
             if pos == 0:
-                mx.add(s, kick(sr, rng, 0.9), G_KICK)
+                mx.add(s, kick(sr, rng, 0.9), g["KICK"])
             if pos == 2:
-                mx.add(s, clap(sr, rng, 0.45 + 0.25 * energy), G_CLAP, rev=0.25)
+                mx.add(s, clap(sr, rng, 0.45 + 0.25 * energy), g["CLAP"], rev=0.25)
                 if energy > 0.5:
-                    mx.add(s, kick(sr, rng, 0.6), G_KICK)
+                    mx.add(s, kick(sr, rng, 0.6), g["KICK"])
             if pos in (1, 3):
-                mx.add(s, hat(sr, rng, 0.6 + 0.2 * energy, open_=energy > 0.5), G_HAT * (0.8 if energy > 0.5 else 1.0), pan=-0.2)
+                mx.add(s, hat(sr, rng, 0.6 + 0.2 * energy, open_=energy > 0.5), g["HAT"] * (0.8 if energy > 0.5 else 1.0), pan=-0.2)
             else:
-                mx.add(s, hat(sr, rng, 0.35), G_HAT, pan=-0.2)
+                mx.add(s, hat(sr, rng, 0.35), g["HAT"], pan=-0.2)
             s += 0.25
 
     groove(0.0, count0 - 0.5, 0.0)
     # カウントダウンへのつなぎ（小さな連打）
-    mx.add(count0 - 0.5, kick(sr, rng, 0.9), G_KICK)
+    mx.add(count0 - 0.5, kick(sr, rng, 0.9), g["KICK"])
     for j in range(4):
-        mx.add(count0 - 0.5 + 0.125 * j, clap(sr, rng, 0.25 + 0.12 * j), G_CLAP, rev=0.25)
+        mx.add(count0 - 0.5 + 0.125 * j, clap(sr, rng, 0.25 + 0.12 * j), g["CLAP"], rev=0.25)
 
     # カウントダウン：Gsus4 → G7 で ため、時計に合わせて「ドン」
     half = (gap - count0) * 0.6
-    mx.add(count0, pad_chord([55, 60, 62, 67], half, sr, bright=0.3, bright_end=0.65, attack=0.25, release=0.15, amp_end=1.5), G_PAD * 2.2, rev=0.3)
-    mx.add(count0 + half, pad_chord([55, 59, 62, 65], gap - count0 - half, sr, bright=0.65, bright_end=1.0, attack=0.05, release=0.015, amp_end=1.6), G_PAD * 3.3, rev=0.3)
-    mx.add(count0, bass_note(hz(43), gap - count0 - 0.02, sr, vel=0.5), G_BASS)
+    mx.add(count0, pad_chord([55, 60, 62, 67], half, sr, bright=0.3, bright_end=0.65, attack=0.25, release=0.15, amp_end=1.5), g["PAD"] * 2.2, rev=0.3)
+    mx.add(count0 + half, pad_chord([55, 59, 62, 65], gap - count0 - half, sr, bright=0.65, bright_end=1.0, attack=0.05, release=0.015, amp_end=1.6), g["PAD"] * 3.3, rev=0.3)
+    mx.add(count0, bass_note(hz(43), gap - count0 - 0.02, sr, vel=0.5), g["BASS"])
     for tk in ticks:
         mx.add(tk, thump(sr), 0.45)
     mx.add(count0 + 0.3, riser(sr, rng, gap - count0 - 0.3), 0.05)
 
     # 正解のあと：明るいリズム
-    mx.add(reveal, crash(sr, rng, vel=0.9), G_CRASH, rev=0.2)
+    mx.add(reveal, crash(sr, rng, vel=0.9), g["CRASH"], rev=0.2)
     groove(reveal, reveal + 3.5, 1.0)
-    mx.add(reveal + 3.5, kick(sr, rng, 0.9), G_KICK)
-    mx.add(reveal + 3.5, crash(sr, rng, vel=0.6), G_CRASH, rev=0.2)
+    mx.add(reveal + 3.5, kick(sr, rng, 0.9), g["KICK"])
+    mx.add(reveal + 3.5, crash(sr, rng, vel=0.6), g["CRASH"], rev=0.2)
 
     # 響き（リバーブ）
     ir = reverb_ir(sr, rng)
