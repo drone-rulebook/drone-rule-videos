@@ -1,0 +1,54 @@
+name: ずんだもんの見本（一時的）
+
+on:
+  push:
+    branches: [zundamon]
+
+permissions:
+  contents: write
+
+jobs:
+  sample:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: 道具を入れる
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q pillow numpy imageio-ffmpeg
+      - name: VOICEVOX を立てる
+        run: |
+          docker run -d --rm --name voicevox -p 127.0.0.1:50021:50021 voicevox/voicevox_engine:cpu-latest
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:50021/version && break; sleep 3; done
+          curl -s http://127.0.0.1:50021/speakers | python -c "import json,sys;print([(s['name'],[(t['name'],t['id']) for t in s['styles']]) for s in json.load(sys.stdin) if s['name']=='ずんだもん'])"
+      - name: 声をオンにして見本をつくる
+        run: |
+          python - <<'PY'
+          import json
+          p = "themes/drone.json"
+          t = json.load(open(p, encoding="utf-8"))
+          t["声"]["使う"] = True
+          json.dump(t, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+          PY
+          mkdir -p voice_samples
+          for s in モーション 黒板 ノート; do python render.py --sample "voice_samples/ずんだもん_$s.mp4" --style "$s" 2>&1 | tail -3; done
+          python - <<'PY'
+          import json, sys
+          sys.path.insert(0, ".")
+          import voice
+          t = json.load(open("themes/drone.json", encoding="utf-8"))
+          print("available:", voice.available(t["声"]), voice._engine)
+          PY
+          git checkout themes/drone.json
+      - name: 見本を置く
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add voice_samples
+          git commit -q -m "ずんだもんの見本"
+          git push -q
