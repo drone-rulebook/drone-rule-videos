@@ -223,6 +223,9 @@ class Motion(Look):
             paste(cv, rrect(bw, 10, 5, c["強調"]), CX - bw / 2 - 4, 700 - 4)
         q = ease_out(prog(t, SWITCH + 0.5, SWITCH + 0.85))
         paste(cv, text_sprite(w["締め3"], c["文字"], "Bold", 32), CX, 760 + 12 * (1 - q), alpha=q, anchor="cc")
+        if w.get("締め4"):
+            q4 = ease_out(prog(t, SWITCH + 0.7, SWITCH + 1.05))
+            paste(cv, text_sprite(w["締め4"], c["強調"], "Bold", 30), CX, 822 + 12 * (1 - q4), alpha=q4, anchor="cc")
         if self.voice_credit:
             paste(cv, text_sprite(self.voice_credit, c["うすい文字"], "Medium", 15), CX, 900, alpha=q, anchor="cc")
 

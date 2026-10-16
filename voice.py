@@ -1,13 +1,17 @@
 # -*- coding: utf-8 -*-
 """読み上げの声（入れるかどうかは themes/*.json の「声」→「使う」。はじめはオフ）。
 
-使うのは Open JTalk（名古屋工業大学ほか・修正BSDライセンス）と、
-声のデータ HTS Voice "NITECH-JP-ATR503-M001"（名古屋工業大学・CC BY 3.0：クレジットを出せば、商用を含めて使える）。
-Ubuntu の公式の部品（apt の open-jtalk・open-jtalk-mecab-naist-jdic・hts-voice-nitech-jp-atr503-m001）で入る。
-入っていなければ、声なしで動画を作る（止まらない）。
+声の作り方は「声」→「エンジン」で選ぶ。
+- "VOICEVOX"：VOICEVOX ENGINE（Actions では docker の voicevox/voicevox_engine を立てる）。話者は「話者」「スタイル」で選ぶ
+  （例：ずんだもん／ノーマル）。キャラクターごとの規約に従い、クレジット「VOICEVOX:キャラ名」を動画内に出す。
+- "OpenJTalk"：Open JTalk（修正BSD）と HTS Voice "NITECH-JP-ATR503-M001"（名古屋工業大学・CC BY 3.0）。apt で入る。
+どちらも使えなければ、声なしで動画を作る（止まらない）。
 """
-import os, re, shutil, subprocess, tempfile, wave
+import io, json, os, re, shutil, subprocess, tempfile, urllib.parse, urllib.request, wave
 import numpy as np
+
+VOICEVOX_URL = os.environ.get("VOICEVOX_URL", "http://127.0.0.1:50021")
+_engine = {"name": "OpenJTalk", "speaker": None}
 
 DIC_DIRS = ["/var/lib/mecab/dic/open-jtalk/naist-jdic", "/usr/share/open_jtalk/dic"]
 VOICES = ["/usr/share/hts-voice/nitech-jp-atr503-m001/nitech_jp_atr503_m001.htsvoice"]
@@ -20,7 +24,36 @@ def _find(paths):
     return None
 
 
-def available():
+def _vv(path, params=None, body=None, timeout=60):
+    url = VOICEVOX_URL + path + ("?" + urllib.parse.urlencode(params) if params else "")
+    data = json.dumps(body).encode("utf-8") if body is not None else (b"" if path != "/speakers" and path != "/version" else None)
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"} if data is not None else {})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def _vv_speaker(name, style):
+    for sp in json.loads(_vv("/speakers")):
+        if sp.get("name") == name:
+            for st in sp.get("styles", []):
+                if st.get("name") == style:
+                    return st["id"]
+    return None
+
+
+def available(cfg=None):
+    """声を作れるか。cfg（themes の「声」）の「エンジン」で使う方を選ぶ"""
+    cfg = cfg or {}
+    if str(cfg.get("エンジン", "OpenJTalk")).upper() == "VOICEVOX":
+        try:
+            sid = _vv_speaker(cfg.get("話者", "ずんだもん"), cfg.get("スタイル", "ノーマル"))
+        except Exception:
+            return False
+        if sid is None:
+            return False
+        _engine.update(name="VOICEVOX", speaker=sid)
+        return True
+    _engine.update(name="OpenJTalk", speaker=None)
     return bool(shutil.which("open_jtalk") and _find(DIC_DIRS) and _find(VOICES))
 
 
@@ -38,6 +71,18 @@ def reading(text, table):
 
 def synth(text, speed, sr):
     """text を読み上げた音（モノラル、sr Hz、-1〜1）を返す"""
+    if _engine["name"] == "VOICEVOX":
+        sid = _engine["speaker"]
+        q = json.loads(_vv("/audio_query", {"text": text, "speaker": sid}))
+        q.update(speedScale=speed, prePhonemeLength=0.05, postPhonemeLength=0.08,
+                 outputSamplingRate=sr, outputStereo=False)
+        wav = _vv("/synthesis", {"speaker": sid}, body=q, timeout=120)
+        with wave.open(io.BytesIO(wav), "rb") as w:
+            rate, n, ch = w.getframerate(), w.getnframes(), w.getnchannels()
+            x = np.frombuffer(w.readframes(n), dtype=np.int16).astype(np.float64) / 32768.0
+        if ch > 1:
+            x = x.reshape(-1, ch).mean(axis=1)
+        return _finish(x, rate, sr)
     with tempfile.TemporaryDirectory() as td:
         out = os.path.join(td, "v.wav")
         cmd = ["open_jtalk", "-x", _find(DIC_DIRS), "-m", _find(VOICES), "-r", f"{speed:.2f}", "-ow", out]
@@ -45,6 +90,10 @@ def synth(text, speed, sr):
         with wave.open(out, "rb") as w:
             rate, n = w.getframerate(), w.getnframes()
             x = np.frombuffer(w.readframes(n), dtype=np.int16).astype(np.float64) / 32768.0
+    return _finish(x, rate, sr)
+
+
+def _finish(x, rate, sr):
     if rate != sr:
         x = np.interp(np.arange(int(len(x) * sr / rate)) * rate / sr, np.arange(len(x)), x)
     # 前後の無音を詰める

@@ -200,7 +200,8 @@ class Hand(Look):
         w = self.words
         self.e_lines = []
         items = [(self.theme.get("チャンネル名", ""), self.sub, "Bold", 28, 420), (w["締め1"], self.em, "Black", 104, 530),
-                 (w["締め2"], self.ink, "Black", 60, 642), (w["締め3"], self.ink, "Bold", 32, 760)]
+                 (w["締め2"], self.ink, "Black", 60, 642), (w["締め3"], self.ink, "Bold", 32, 760),
+                 (w.get("締め4", ""), self.em, "Bold", 30, 822)]
         for k, (txt, col, wt, px, y) in enumerate(items):
             if txt:
                 self.e_lines.append((self.tex([text_sprite(txt, col, wt, px)], 60 + k)[0], y))

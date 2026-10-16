@@ -45,7 +45,12 @@ jobs:
       - name: 読み上げの部品を入れる（themes の「声」が「使う」のときだけ）
         continue-on-error: true     # 入らなければ、声なしで作る
         run: |
-          if python -c "import json,sys;c=json.load(open('config.json'));t=json.load(open('themes/'+c.get('theme','drone')+'.json'));sys.exit(0 if t.get('声',{}).get('使う') else 1)"; then
+          ENGINE=$(python -c "import json;c=json.load(open('config.json'));t=json.load(open('themes/'+c.get('theme','drone')+'.json'));v=t.get('声',{});print(str(v.get('エンジン','OpenJTalk')).upper() if v.get('使う') else 'OFF')")
+          echo "声のエンジン：$ENGINE"
+          if [ "$ENGINE" = "VOICEVOX" ]; then
+            docker run -d --rm --name voicevox -p 127.0.0.1:50021:50021 voicevox/voicevox_engine:cpu-latest
+            for i in $(seq 1 60); do curl -sf http://127.0.0.1:50021/version && break; sleep 3; done
+          elif [ "$ENGINE" = "OPENJTALK" ]; then
             sudo apt-get install -y -qq open-jtalk open-jtalk-mecab-naist-jdic hts-voice-nitech-jp-atr503-m001
           fi
 
