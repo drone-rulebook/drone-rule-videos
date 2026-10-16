@@ -38,6 +38,7 @@ def load_theme(cfg=None):
     name = cfg.get("theme", "drone")
     theme = json.load(open(os.path.join(HERE, "themes", name + ".json"), encoding="utf-8"))
     theme["_name"] = name
+    dk.NO_BREAK_WORDS[:] = theme.get("改行しない言葉", [])
     for k, v in list(theme["文言"].items()):           # 画面に出す文言も、フォントに無い文字を近い字に
         theme["文言"][k], bad = safe_text(v)
         if bad:

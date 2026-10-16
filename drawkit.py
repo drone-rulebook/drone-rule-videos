@@ -4,7 +4,7 @@
 座標はすべて「720×1280 の画面」を基準に書く（論理座標）。
 実際の画質（1080×1920 など）には setup() で合わせ、内部で R 倍して描く。
 """
-import math, os
+import math, os, re
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
@@ -83,22 +83,74 @@ NO_HEAD = set("、。，．・：；？！ー～」』）】〕｝〉》’”�
 NO_TAIL = set("「『（【〔｛〈《‘“")
 
 
-def _wrap_line(chars, f, max_px):
-    """chars: [(文字, 色, 強調)] を1行 max_px に収まるように折り返す（日本語の禁則を少しだけ守る）"""
+def _kind(ch):
+    if "\u3041" <= ch <= "\u309f":
+        return "ひ"
+    if "\u30a0" <= ch <= "\u30ff" or ch == "ー":
+        return "カ"
+    if ch.isascii() and ch.isalnum() or ch in "０１２３４５６７８９．.%％":
+        return "英"
+    if "\u4e00" <= ch <= "\u9fff" or ch in "々〆":
+        return "漢"
+    return "他"
+
+
+PARTICLES = set("はがをにでともやのへ")
+NO_BREAK_WORDS = []      # 途中で改行しない言葉（themes の「改行しない言葉」から入る）
+
+
+def _break_score(prev, nxt):
+    """prev と nxt の間で改行してよいかの点数（大きいほど自然。0＝言葉の途中なので避けたい）"""
+    a, b = prev[0], nxt[0]
+    if b in NO_HEAD or a in NO_TAIL:
+        return -1
+    if a in "、。，．！？」』）】・：；":
+        s = 3
+    elif b in "「『（【":
+        s = 3
+    elif _kind(a) == "ひ" and _kind(b) in "漢カ英他":
+        s = 3          # 「から｜午前」「の｜時刻」
+    elif a in PARTICLES and _kind(b) == "ひ":
+        s = 1          # 「表示は｜いらない」
+    else:
+        s = 0
+    if s > 0 and prev[2] and nxt[2]:
+        s -= 1         # 強調のまとまりは、なるべく分けない
+    return s
+
+
+def _wrap_line(chars, f, max_px, nice=True):
+    """chars: [(文字, 色, 強調)] を1行 max_px に収まるように折り返す。
+    言葉の途中で切らないよう、少し前の「切ってよい所」（ひらがな→漢字の変わり目・句読点など）で改行する。"""
     lines, cur, w = [], [], 0.0
+    text = "".join(c[0] for c in chars)
+    glue_all = set()                       # 「改行しない言葉」の中の切れ目（文字の位置）
+    for word in NO_BREAK_WORDS:
+        for m in re.finditer(re.escape(word), text):
+            glue_all.update(range(m.start() + 1, m.end()))
+    start = 0                              # cur[0] が chars の何文字目か
     for c in chars:
         cw = f.getlength(c[0])
         if cur and w + cw > max_px:
-            # 行頭禁則：この文字が行頭に来るなら、前の1文字ごと次の行へ
-            if c[0] in NO_HEAD and len(cur) > 1:
-                carry = [cur.pop()]
-            else:
-                carry = []
-            # 行末禁則
-            while len(cur) > 1 and cur[-1][0] in NO_TAIL:
-                carry.insert(0, cur.pop())
-            lines.append(cur)
-            cur = carry
+            seq = cur + [c]
+            glue = {g - start for g in glue_all}
+            look = max(1, min(10, int(len(cur) * 0.6)))
+            best, best_s = None, 0
+            for k in (range(len(cur), max(0, len(cur) - look), -1) if nice else ()):   # 改行は seq[k-1] と seq[k] の間
+                if k < 1:
+                    break
+                sc = -1 if k in glue else _break_score(seq[k - 1], seq[k])
+                if sc > best_s:
+                    best, best_s = k, sc
+                    if sc >= 3:
+                        break
+            if best is None:          # よい所が無い：禁則だけ守って、ここで切る
+                best = len(cur)
+                while best > 1 and (seq[best][0] in NO_HEAD or seq[best - 1][0] in NO_TAIL):
+                    best -= 1
+            lines.append(cur[:best])
+            cur = cur[best:]
+            start += best
             w = sum(f.getlength(x[0]) for x in cur)
         cur.append(c); w += cw
     if cur:
@@ -118,26 +170,27 @@ def _merge(chars):
 
 def layout(text_lines, weight, max_w, max_lines, px, min_px, step=2):
     """文字の大きさを px から min_px まで下げながら、横幅 max_w・max_lines 行に収まる大きさを探す。
+    言葉の切れ目で改行でき、最後の行がぽつんと短くならない大きさを優先する。ただしそのために小さくしすぎない（元の84%まで）。
     text_lines: 段落ごとの [(文字, 色, 強調)]。返り値：(行のリスト, 文字の大きさ, 収まったか)"""
-    p, first = px, None
+    p, fallback, lines = px, None, []
     while True:
         f = font(weight, p)
-        lines, orphan = [], False
-        for segs in text_lines:
-            chars = [(ch, col, emp) for s, col, emp in segs for ch in s]
-            ls = _wrap_line(chars, f, max_w * R) if chars else [[]]
-            orphan |= len(ls) > 1 and len(ls[-1]) <= 3       # 折り返した最後の行が3文字以下（「域」だけ、など）
-            lines += ls
-        fits = len(lines) <= max_lines
-        cur = ([_merge(l) for l in lines], p, fits)
-        if fits and not orphan:
-            return cur
-        if fits and first is None:
-            first = cur
-        if first and p - step < max(min_px, px * 0.82):   # 小さくしすぎない範囲でだけ、ぽつんと残る行を避ける
-            return first
+        for nice in (True, False):
+            lines, orphan = [], False
+            for segs in text_lines:
+                chars = [(ch, col, emp) for s, col, emp in segs for ch in s]
+                ls = _wrap_line(chars, f, max_w * R, nice) if chars else [[]]
+                orphan |= len(ls) > 1 and len(ls[-1]) <= 3       # 折り返した最後の行が3文字以下
+                lines += ls
+            fits = len(lines) <= max_lines
+            if fits and nice and not orphan:
+                return [_merge(l) for l in lines], p, True
+            if fits and fallback is None:
+                fallback = ([_merge(l) for l in lines], p, True)
+        if fallback and p - step < max(min_px, fallback[1] * 0.84):
+            return fallback
         if p <= min_px:
-            return first or cur
+            return fallback or ([_merge(l) for l in lines], p, False)
         p -= step
 
 
@@ -333,15 +386,18 @@ def wobble_path(pts, seed, amp=1.5, step=6):
     return out + noise * amp * 2.0
 
 
-def ellipse_path(cx, cy, rx, ry, seed, turns=1.12, start=-2.4, amp=2.0):
-    """手で丸を描いたような、少しはみ出して閉じる楕円"""
+def ellipse_path(cx, cy, rx, ry, seed, turns=1.12, start=-2.4, amp=2.0, power=2.0):
+    """手で丸を描いたような、少しはみ出して閉じる楕円。power を大きくすると角の丸い四角に近づく（横長の文字を囲みやすい）"""
     rng = np.random.default_rng(seed)
     n = int(90 * turns)
     th = start + np.linspace(0, 2 * math.pi * turns, n)
     grow = 1 + 0.06 * np.linspace(-1, 1, n)
     wob = np.convolve(rng.standard_normal(n), np.ones(9) / 9, "same") * amp * 2.5
-    x = cx + (rx * grow + wob) * np.cos(th)
-    y = cy + (ry * grow + wob) * np.sin(th)
+    c, s_ = np.cos(th), np.sin(th)
+    e = 2.0 / power
+    c, s_ = np.sign(c) * np.abs(c) ** e, np.sign(s_) * np.abs(s_) ** e
+    x = cx + (rx * grow + wob) * c
+    y = cy + (ry * grow + wob) * s_
     return np.stack([x, y], 1)
 
 

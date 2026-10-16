@@ -20,7 +20,7 @@ class Motion(Look):
         self.qb = self.q_block(c["文字"], c["強調"], "Black", 52, 34)
         self.q_imgs = self.qb.line_images()
         self.place(self.qb, 112, 16)
-        self.cb = [self.choice_block(i, c["カードの文字"], c["カードの文字"], CARD_W - 100 - 70, px=42, max_h=self.card_h - 14) for i in range(3)]
+        self.cb = self.choice_blocks(c["カードの文字"], c.get("カードの強調", c["カードの文字"]), CARD_W - 100 - 70, 42, self.card_h - 14)
         self.cards = [self.make_card(i, False) for i in range(3)]
         self.cards_done = [self.make_card(i, True) for i in range(3)]
         self.tb = self.trap_block(c["文字"], c["強調"], 516, min_px=24, room=self.trap_room(50), px=38)
@@ -112,8 +112,8 @@ class Motion(Look):
         p = ease_out(prog(t, -0.3, 0.3))
         spr = text_sprite(self.words["ラベル"], c["強調"], "Bold", 26)
         tw = spr.width / dk.R
-        paste(cv, rrect(tw + 22, 44, 22, with_alpha(c["強調"], 34), c["強調"], 2), SAFE["left"] - 4 - 20 * (1 - p), 96 - 4, alpha=p)
-        paste(cv, spr, SAFE["left"] + 11 - 20 * (1 - p), 118, alpha=p, anchor="lc")
+        paste(cv, rrect(tw + 22, 44, 22, with_alpha(c["強調"], 34), c["強調"], 2), SAFE["left"] - 4 - 20 * (1 - p), 104 - 4, alpha=p)
+        paste(cv, spr, SAFE["left"] + 11 - 20 * (1 - p), 126, alpha=p, anchor="lc")
 
     def question(self, cv, t):
         c, qb = self.c, self.qb

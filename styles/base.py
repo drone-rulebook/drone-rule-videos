@@ -70,6 +70,10 @@ class Look:
             tb = TextBlock(segs, weight, max_w, 2, tb.px - 2, tb.px - 2, line_h=1.2)
         return tb
 
+    def choice_blocks(self, base, accent, max_w, px, max_h):
+        """3つの選択肢の文字（長い選択肢だけ小さくなる。短いものは読みやすい大きさのまま）"""
+        return [self.choice_block(i, base, accent, max_w, px=px, max_h=max_h) for i in range(3)]
+
     def trap_parts(self):
         """「ひっかけ：〜」を 見出し と 本文 に分ける"""
         trap = self.sc["trap"]
@@ -101,9 +105,9 @@ class Look:
             w = tb.widths[i]
             if done <= 0:
                 break
-            f = min(1.0, done / w) if w else 1.0
+            f = 1.0 if (frac >= 1 or not w) else min(1.0, done / w)
             done -= w
-            spr = img if f >= 1 else crop_reveal(img, (PAD + w * f) / (w + 2 * PAD + 1), soft)
+            spr = img if f >= 0.999 else crop_reveal(img, (PAD + (w + PAD + 1) * f) / (w + 2 * PAD + 1), soft)
             paste(cv, spr, lx - PAD, ly - PAD, alpha=alpha)
 
     def sounds(self):

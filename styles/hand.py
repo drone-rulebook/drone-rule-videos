@@ -26,14 +26,15 @@ class Hand(Look):
         self.place(self.qb, 116, 16)
         tx = CARD_X + 78
         self.c_x = tx
-        self.cb = [self.choice_block(i, self.ink, self.em, CARD_W - 78 - 30, px=42, max_h=self.card_h - 6) for i in range(3)]
+        self.cb = self.choice_blocks(self.ink, self.em, CARD_W - 78 - 30, 42, self.card_h - 6)
         self.c_imgs = [self.tex(b.line_images(), 10 + i) for i, b in enumerate(self.cb)]
         self.letters = [self.tex([text_sprite(L, self.ink, "Black", 36)], 20 + i)[0] for i, L in enumerate("ABC")]
         self.row_cy = [y + self.card_h / 2 for y in self.card_y]
         s = self.seed
         self.p_letter = [self.letter_path(i, s + i) for i in range(3)]
         cy = self.row_cy[self.correct]
-        self.p_ok = ellipse_path(CX + 4, cy, 288, self.card_h / 2 + 4, s + 7, amp=1.6)
+        ry = max(self.card_h / 2 + 2, self.cb[self.correct].h / 2 + 16)   # 2行の選択肢でも文字にかからない高さ
+        self.p_ok = ellipse_path(CX + 4, cy, 290, ry, s + 7, amp=1.4, power=3.2)
         self.p_ng = {}
         for i in range(3):
             if i != self.correct:          # まちがいの選択肢は、1行ずつ線で消す
@@ -68,10 +69,10 @@ class Hand(Look):
     def header(self, cv, t):
         spr = self.tex([text_sprite(self.words["ラベル"], self.sub, "Bold", 26)], 3)[0]
         w = spr.width / dk.R - 2 * PAD
-        self.write_spr(cv, spr, SAFE["left"], 102, prog(t, -0.4, 0.0))
+        self.write_spr(cv, spr, SAFE["left"], 108, prog(t, -0.4, 0.0))
         path = self._strokes.get("hpath")
         if path is None:
-            path = self._strokes["hpath"] = wobble_path([(SAFE["left"], 140), (SAFE["left"] + w, 138)], self.seed + 2, 0.8, 10)
+            path = self._strokes["hpath"] = wobble_path([(SAFE["left"], 146), (SAFE["left"] + w, 144)], self.seed + 2, 0.8, 10)
         self.stroke(cv, "h", path, prog(t, -0.1, 0.25), self.sub, 2.4)
 
     def transition(self, t):
