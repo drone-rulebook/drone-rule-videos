@@ -94,7 +94,7 @@ def clean_kaisetsu(s):
     out = []
     for line in str(s or "").replace("\r", "").split("\n"):
         line = EMOJI_RE.sub("", line).strip()
-        if not line or re.match(r"^正解\s*[A-CＡ-Ｃ]?\s*[：:]", line) or re.search(r"note|ノート|プロフ", line, re.I):
+        if not line or re.match(r"^正解\s*[A-CＡ-Ｃ](?![A-Za-z])", line) or re.search(r"note|ノート|プロフ", line, re.I):
             continue
         out.append(line)
     return out
