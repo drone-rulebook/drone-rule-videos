@@ -10,6 +10,9 @@ on:
       - "videos/**"
       - "status.json"
       - "README.md"
+      - "docs/**"
+      - "samples/**"
+      - "tests/**"
   workflow_dispatch:         # 手で動かすとき（Actions の画面の「Run workflow」）
 
 permissions:
@@ -27,6 +30,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: 道具を入れる
+        continue-on-error: true     # 入らなくても、pip の imageio-ffmpeg で動く
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg
@@ -36,7 +40,14 @@ jobs:
           python-version: "3.12"
 
       - name: Pythonの部品を入れる
-        run: pip install -q pillow numpy
+        run: pip install -q pillow numpy imageio-ffmpeg
+
+      - name: 読み上げの部品を入れる（themes の「声」が「使う」のときだけ）
+        continue-on-error: true     # 入らなければ、声なしで作る
+        run: |
+          if python -c "import json,sys;c=json.load(open('config.json'));t=json.load(open('themes/'+c.get('theme','drone')+'.json'));sys.exit(0 if t.get('声',{}).get('使う') else 1)"; then
+            sudo apt-get install -y -qq open-jtalk open-jtalk-mecab-naist-jdic hts-voice-nitech-jp-atr503-m001
+          fi
 
       - name: 台本から動画をつくる
         run: python render.py

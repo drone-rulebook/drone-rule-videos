@@ -1,341 +1,145 @@
 # -*- coding: utf-8 -*-
-"""二等学科ひっかけクイズの縦型ショート動画（720x1280・30fps・13秒）を、台本から作る。
+"""二等学科ひっかけクイズの縦型ショート動画（1080x1920・30fps・14秒）を、台本から作る。
 
 使い方
-  python render.py                   … 公開した「動画台本」シート（config.json の csv_url）を読み、近い日の「待ち」の台本を動画にする
-  python render.py --sample out.mp4  … 見本の台本で1本だけ作る（確認用）
+  python render.py                     … 公開した「動画台本」シート（config.json の csv_url）を読み、近い日の「待ち」の台本を動画にする。
+                                         見た目の版（themes/*.json）が変わっていたら、まだ公開していない動画を新しい見た目で作り直す。
+  python render.py --sample out.mp4 [--style 黒板]   … 見本の台本で1本だけ作る（確認用）
+  python render.py --samples           … 型ごとの見本を samples/ に作る（mp4 と、見せ場を並べた画像）
+  python render.py --csv 台本.csv 出力先  … CSV の全行を（日付や状態に関係なく）出力先に作る（確かめ用）
 
-絵・動き・文字・効果音はすべてプログラムで作る（素材ファイルは使わない。フォントだけ fonts/ に同梱）。
-台本の文字は、*で囲んだところを黄色にする（例：150mは*どこから*測る？）。
+絵・動き・文字・効果音・BGM はすべてプログラムで作る（素材ファイルは使わない。フォントだけ fonts/ に同梱）。
+台本の文字は、*で囲んだところを強調する（例：150mは*どこから*測る？）。
+見た目の型（styles/）は3つ。台本IDで日替わりに選ぶ（themes/*.json の「型の選び方」）。
 """
-import csv, datetime, io, json, math, os, re, subprocess, sys, unicodedata, urllib.request, wave
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+import csv, datetime, io, json, os, re, shutil, subprocess, sys, unicodedata, urllib.request, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import music  # BGM（music.py）
+import drawkit as dk
+import audio
+import voice
+from styles import LOOKS
+from styles.base import DUR, COUNT0, REVEAL, TR0, TR1
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-W, H, S = 720, 1280, 2
-W2, H2 = W * S, H * S
-FPS, DUR = 30, 13.0
+FPS = 30
 N = int(FPS * DUR)
+SIZES = {"1080x1920": (1080, 1920), "720x1280": (720, 1280)}
+MAX_MB = 2.4          # これより大きくなったら、少し圧縮しなおす
+TARGET_MB = 2.0
 
-NAVY = (19, 33, 60, 255)
-NAVY2 = (36, 58, 98, 255)
-YELLOW = (255, 196, 0, 255)
-WHITE = (245, 247, 250, 255)
-GREY = (150, 162, 182, 255)
-DARK = (14, 22, 40, 255)
-RED = (236, 76, 62, 255)
 
-FONT_FILES = {
-    "Black": ["fonts/NotoSansJP-Black-subset.otf", "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"],
-    "Bold": ["fonts/NotoSansJP-Bold-subset.otf", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"],
-    "Medium": ["fonts/NotoSansJP-Medium-subset.otf", "/usr/share/fonts/opentype/noto/NotoSansCJK-Medium.ttc", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"],
-}
-_fonts = {}
-def font(weight, px):
-    key = (weight, px)
-    if key not in _fonts:
-        for p in FONT_FILES[weight]:
-            path = p if os.path.isabs(p) else os.path.join(HERE, p)
-            if os.path.exists(path):
-                _fonts[key] = ImageFont.truetype(path, int(px * S), index=0)
-                break
+# ---------- 設定（テーマ） ----------
+def load_config():
+    return json.load(open(os.path.join(HERE, "config.json"), encoding="utf-8"))
+
+
+def load_theme(cfg=None):
+    cfg = cfg if cfg is not None else load_config()
+    name = cfg.get("theme", "drone")
+    theme = json.load(open(os.path.join(HERE, "themes", name + ".json"), encoding="utf-8"))
+    theme["_name"] = name
+    dk.NO_BREAK_WORDS[:] = theme.get("改行しない言葉", [])
+    for k, v in list(theme["文言"].items()):           # 画面に出す文言も、フォントに無い文字を近い字に
+        theme["文言"][k], bad = safe_text(v)
+        if bad:
+            print("注意：文言にフォントに無い文字があります：", k, "".join(bad))
+    for k in theme["型の選び方"]["型"]:
+        if k not in LOOKS:
+            raise ValueError("themes の 型 に知らない名前があります：" + k + "（使えるのは " + "・".join(LOOKS) + "）")
+    return theme
+
+
+def look_tag(theme):
+    """動画に書きこむ「見た目の版」の印（テーマ名と版の番号）"""
+    return f"{theme['_name']}-{theme['見た目の版']}"
+
+
+def choose_look(vid, theme, row=None):
+    """台本ID（と台本の「型」の列）から、その日の見た目の型を決める"""
+    sel = theme["型の選び方"]
+    names = sel["型"]
+    if row and str(row.get("型", "")).strip() in LOOKS:
+        return str(row["型"]).strip()
+    if sel.get("方法") == "固定":
+        return names[0]
+    nums = re.findall(r"\d+", vid)
+    n = int(nums[-1]) if nums else zlib.crc32(vid.encode("utf-8"))
+    return names[n % len(names)]
+
+
+# ---------- 書き出し ----------
+def ffmpeg_bin():
+    p = shutil.which("ffmpeg")
+    if p:
+        return p
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        raise RuntimeError("ffmpeg が見つかりません（pip install imageio-ffmpeg で入ります）")
+
+
+def read_tag(path):
+    """動画に書きこんだ「見た目の版」を読む（無ければ ""）"""
+    r = subprocess.run([ffmpeg_bin(), "-hide_banner", "-i", path], capture_output=True, text=True, errors="replace")
+    m = re.search(r"comment\s*:\s*look=([^\s;]+)", r.stderr)
+    return m.group(1) if m else ""
+
+
+def make_look(sc, theme, style):
+    w, h = SIZES.get(theme.get("画質", "1080x1920"), SIZES["1080x1920"])
+    dk.setup(w, h)
+    return LOOKS[style](sc, theme, theme["色"][style])
+
+
+TIMES = {"count0": COUNT0, "reveal": REVEAL, "ticks": [COUNT0 + k for k in range(3)],
+         "q": (0.3, COUNT0 - 0.1), "ans": (REVEAL + 0.1, REVEAL + 1.15), "trap": (REVEAL + 1.2, TR1 + 0.6)}
+
+
+def render(sc, out_path, theme, style, info=None):
+    """台本 sc を style の見た目で動画にして out_path に置く。info（dict）に声の結果などを書く。"""
+    info = info if info is not None else {}
+    look = make_look(sc, theme, style)
+    vcfg = theme.get("声", {})
+    voices = []
+    if vcfg.get("使う"):
+        if voice.available():
+            voices, skipped = voice.lines(sc, theme["文言"], vcfg, TIMES, audio.SR)
+            if voices:
+                look.voice_credit = safe_text(vcfg.get("クレジット", ""))[0]
+            info["声"] = "オン" + ("（時間内に読めず省いた所：" + "・".join(skipped) + "）" if skipped else "")
         else:
-            raise SystemExit("フォントが見つかりません：" + weight)
-    return _fonts[key]
-
-# ---------- 便利関数 ----------
-def clamp(v, a=0.0, b=1.0): return max(a, min(b, v))
-def prog(t, t0, t1): return clamp((t - t0) / (t1 - t0)) if t1 > t0 else (1.0 if t >= t1 else 0.0)
-def ease_out(p): return 1 - (1 - p) ** 3
-def ease_in_out(p): return 4 * p ** 3 if p < 0.5 else 1 - (-2 * p + 2) ** 3 / 2
-def ease_back(p, s=1.70158): return 1 + (s + 1) * (p - 1) ** 3 + s * (p - 1) ** 2
-def mix(c1, c2, p): return tuple(int(c1[i] + (c2[i] - c1[i]) * p) for i in range(4))
-
-def segments(text, base, accent=YELLOW):
-    """「*強調*」を黄色にした [(文字, 色)] にする"""
-    out, on = [], False
-    for part in str(text).split("*"):
-        if part:
-            out.append((part, accent if on else base))
-        on = not on
-    return out or [("", base)]
-
-_sprites = {}
-def text_sprite(segs, weight, px):
-    key = (tuple(segs), weight, px)
-    if key in _sprites:
-        return _sprites[key]
-    f = font(weight, px)
-    asc, desc = f.getmetrics()
-    total = sum(f.getlength(s) for s, _ in segs)
-    pad = 6 * S
-    img = Image.new("RGBA", (int(total) + pad * 2, asc + desc + pad * 2), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    x = pad
-    for s, col in segs:
-        d.text((x, pad + asc), s, font=f, fill=col, anchor="ls")
-        x += f.getlength(s)
-    _sprites[key] = img
-    return img
-
-def fit_sprite(segs, weight, px, max_w, min_px):
-    """横幅 max_w（最終の px）に収まるまで文字を小さくする"""
-    p = px
-    while p > min_px:
-        spr = text_sprite(segs, weight, p)
-        if spr.width / S - 12 <= max_w:
-            return spr
-        p -= 2
-    return text_sprite(segs, weight, min_px)
-
-def paste(canvas, spr, x, y, alpha=1.0, scale=1.0, anchor="lt"):
-    if alpha <= 0.003 or scale <= 0.01:
-        return
-    if scale != 1.0:
-        spr = spr.resize((max(1, int(spr.width * scale)), max(1, int(spr.height * scale))), Image.LANCZOS)
-    if alpha < 0.999:
-        spr = spr.copy()
-        spr.putalpha(spr.getchannel("A").point(lambda v: int(v * alpha)))
-    X, Y = int(x * S), int(y * S)
-    if anchor == "ct": X -= spr.width // 2
-    elif anchor == "cc": X -= spr.width // 2; Y -= spr.height // 2
-    elif anchor == "lc": Y -= spr.height // 2
-    l, t = max(0, X), max(0, Y)
-    r, b = min(W2, X + spr.width), min(H2, Y + spr.height)
-    if r <= l or b <= t:
-        return
-    canvas.alpha_composite(spr.crop((l - X, t - Y, r - X, b - Y)), dest=(l, t))
-
-def rrect_layer(w, h, r, fill):
-    img = Image.new("RGBA", (int(w * S), int(h * S)), (0, 0, 0, 0))
-    ImageDraw.Draw(img).rounded_rectangle([0, 0, int(w * S) - 1, int(h * S) - 1], radius=int(r * S), fill=fill)
-    return img
-
-# ---------- 台本 → 動画 ----------
-T_TITLE_END = 1.0
-CARD_T = [1.70, 1.95, 2.20]
-T_COUNT0, T_COUNT1 = 5.5, 8.0
-T_REVEAL = 8.0
-T_WIPE0, T_WIPE1, T_SWITCH = 11.4, 11.8, 11.6
-CARD_X, CARD_W, CARD_H = 40, 560, 104
-CARD_Y = [440, 562, 684]
-
-class Video:
-    def __init__(self, sc):
-        self.q1, self.q2 = sc["q1"], sc.get("q2", "")
-        self.choices = [("A", sc["a"]), ("B", sc["b"]), ("C", sc["c"])]
-        self.correct = "ABC".index(sc["answer"].strip().upper())
-        trap = sc["trap"]
-        if "：" in trap:
-            head, tail = trap.split("：", 1)
-            self.trap = [(head + "：", GREY)] + segments(tail, WHITE)
-        else:
-            self.trap = segments(trap, WHITE)
-
-    def label(self, cv, t):
-        p = ease_out(prog(t, 1.0, 1.35))
-        if p <= 0:
-            return
-        y = 64 - 20 * (1 - p)
-        ImageDraw.Draw(cv).rectangle([40 * S, int((y + 14) * S), 48 * S, int((y + 50) * S)], fill=mix(NAVY, YELLOW, p))
-        paste(cv, text_sprite([("二等学科 ひっかけ問題", YELLOW)], "Bold", 30), 56, y + 4, alpha=p)
-
-    def title(self, cv, t):
-        out = prog(t, 0.82, 1.0)
-        paste(cv, text_sprite([("二等学科", WHITE)], "Medium", 44), 360, 470, alpha=prog(t, 0.0, 0.3) * (1 - out), anchor="ct")
-        sc = ease_back(prog(t, 0.15, 0.5)) * (1 + 0.15 * out)
-        paste(cv, text_sprite([("ひっかけ問題", YELLOW)], "Black", 96), 360, 600, alpha=prog(t, 0.15, 0.25) * (1 - out), scale=sc, anchor="cc")
-        bw = 380 * ease_out(prog(t, 0.35, 0.6))
-        if bw > 2 and out < 1:
-            ImageDraw.Draw(cv).rectangle([int((360 - bw / 2) * S), 706 * S, int((360 + bw / 2) * S), 718 * S], fill=mix(NAVY, YELLOW, 1 - out))
-
-    def question(self, cv, t):
-        p1 = ease_out(prog(t, 1.05, 1.4)); p2 = ease_out(prog(t, 1.2, 1.55))
-        paste(cv, fit_sprite(segments(self.q1, WHITE), "Bold", 50, 640, 34), 40 - 60 * (1 - p1), 196, alpha=p1)
-        if self.q2:
-            paste(cv, fit_sprite(segments(self.q2, WHITE), "Bold", 50, 640, 34), 40 - 60 * (1 - p2), 276, alpha=p2)
-
-    def cards(self, cv, t):
-        rv = prog(t, T_REVEAL, T_REVEAL + 0.22)
-        for i, (letter, label) in enumerate(self.choices):
-            p = ease_out(prog(t, CARD_T[i], CARD_T[i] + 0.4))
-            if p <= 0:
-                continue
-            correct = i == self.correct
-            fill = mix(WHITE, YELLOW, rv) if correct else WHITE
-            alpha = 1.0 if correct else 1 - 0.62 * rv
-            sc = 1 + 0.05 * math.sin(math.pi * prog(t, T_REVEAL, T_REVEAL + 0.3)) if (correct and t >= T_REVEAL) else 1.0
-            card = rrect_layer(CARD_W, CARD_H, 22, fill)
-            d = ImageDraw.Draw(card)
-            cx, cy = 58 * S, CARD_H / 2 * S
-            d.ellipse([cx - 34 * S, cy - 34 * S, cx + 34 * S, cy + 34 * S], fill=NAVY)
-            lt = text_sprite([(letter, WHITE)], "Black", 40)
-            card.alpha_composite(lt, dest=(int(cx - lt.width / 2), int(cy - lt.height / 2)))
-            tx = fit_sprite([(label, DARK)], "Bold", 42, CARD_W - 118 - 74, 26)
-            card.alpha_composite(tx, dest=(118 * S, int(cy - tx.height / 2)))
-            if t >= T_REVEAL + 0.12:
-                m = ease_out(prog(t, T_REVEAL + 0.12, T_REVEAL + 0.35))
-                mx, my = (CARD_W - 52) * S, cy
-                if correct:
-                    rr = 30 * S * m
-                    d.ellipse([mx - rr, my - rr, mx + rr, my + rr], fill=NAVY)
-                    if m > 0.5:
-                        d.line([mx - 13 * S, my + 1 * S, mx - 3 * S, my + 11 * S, mx + 15 * S, my - 11 * S], fill=WHITE, width=6 * S, joint="curve")
-                else:
-                    k = 14 * S * m
-                    d.line([mx - k, my - k, mx + k, my + k], fill=RED, width=7 * S)
-                    d.line([mx - k, my + k, mx + k, my - k], fill=RED, width=7 * S)
-            paste(cv, card, CARD_X + 700 * (1 - p) + CARD_W / 2, CARD_Y[i] + CARD_H / 2, alpha=alpha, scale=sc, anchor="cc")
-
-    def countdown(self, cv, t):
-        if not (T_COUNT0 - 0.05 <= t < T_COUNT0 + 2.65):
-            return
-        a = prog(t, T_COUNT0 - 0.05, T_COUNT0 + 0.15) * (1 - prog(t, T_COUNT1, T_COUNT1 + 0.15))
-        if a <= 0:
-            return
-        layer = Image.new("RGBA", (W2, H2), (0, 0, 0, 0))
-        d = ImageDraw.Draw(layer)
-        cx, cy, r = 360, 905, 74
-        box = [int((cx - r) * S), int((cy - r) * S), int((cx + r) * S), int((cy + r) * S)]
-        d.ellipse(box, outline=NAVY2, width=12 * S)
-        frac = prog(t, T_COUNT0, T_COUNT1)
-        if frac > 0:
-            d.arc(box, start=-90, end=-90 + 360 * frac, fill=YELLOW, width=12 * S)
-        seg = (T_COUNT1 - T_COUNT0) / 3
-        k = min(2, int((t - T_COUNT0) / seg)) if t >= T_COUNT0 else 0
-        t_k = T_COUNT0 + k * seg
-        sc = 1 + 0.35 * (1 - ease_out(prog(t, t_k, t_k + 0.25)))
-        if a < 1:
-            layer.putalpha(layer.getchannel("A").point(lambda v: int(v * a)))
-        cv.alpha_composite(layer)
-        paste(cv, text_sprite([(str(3 - k), WHITE)], "Black", 92), cx, cy - 4, alpha=a, scale=sc, anchor="cc")
-
-    def answer(self, cv, t):
-        if t < T_REVEAL:
-            return
-        p = prog(t, T_REVEAL + 0.05, T_REVEAL + 0.35)
-        letter = "ABC"[self.correct]
-        paste(cv, text_sprite([("正解 " + letter, YELLOW)], "Black", 80), 360, 900, alpha=prog(t, T_REVEAL + 0.05, T_REVEAL + 0.12), scale=0.5 + 0.5 * ease_back(p), anchor="cc")
-        q = ease_out(prog(t, T_REVEAL + 0.45, T_REVEAL + 0.75))
-        paste(cv, fit_sprite(self.trap, "Bold", 38, 640, 26), 360, 968 + 16 * (1 - q), alpha=q, anchor="ct")
-
-    def ending(self, cv, t):
-        e = ease_out(prog(t, T_SWITCH + 0.05, T_SWITCH + 0.4))
-        paste(cv, text_sprite([("毎日1問", YELLOW)], "Black", 100), 360, 560, alpha=e, scale=0.7 + 0.3 * ease_back(prog(t, T_SWITCH + 0.05, T_SWITCH + 0.45)), anchor="cc")
-        paste(cv, text_sprite([("ひっかけ対策", WHITE)], "Black", 60), 360, 676 + 16 * (1 - e), alpha=e, anchor="cc")
-        bw = 300 * ease_out(prog(t, T_SWITCH + 0.3, T_SWITCH + 0.6))
-        if bw > 2:
-            ImageDraw.Draw(cv).rectangle([int((360 - bw / 2) * S), 730 * S, int((360 + bw / 2) * S), 740 * S], fill=YELLOW)
-        q = ease_out(prog(t, T_SWITCH + 0.45, T_SWITCH + 0.75))
-        paste(cv, text_sprite([("チャンネル登録で毎日届きます", WHITE)], "Bold", 34), 360, 790 + 12 * (1 - q), alpha=q, anchor="ct")
-
-    def wipe(self, cv, t):
-        if not (T_WIPE0 <= t <= T_WIPE1):
-            return
-        p = ease_in_out(prog(t, T_WIPE0, T_WIPE1))
-        cx = -500 + 1720 * p
-        k = 260
-        pts = [(cx - 520, 0), (cx + 520 + k, 0), (cx + 520, 1280), (cx - 520 - k, 1280)]
-        ImageDraw.Draw(cv).polygon([(px * S, py * S) for px, py in pts], fill=YELLOW)
-
-    def frame(self, t):
-        cv = Image.new("RGBA", (W2, H2), NAVY)
-        if t < T_TITLE_END:
-            self.title(cv, t)
-        elif t < T_SWITCH:
-            self.label(cv, t); self.question(cv, t); self.cards(cv, t); self.countdown(cv, t); self.answer(cv, t)
-        else:
-            self.label(cv, t); self.ending(cv, t)
-        self.wipe(cv, t)
-        return cv.convert("RGB").resize((W, H), Image.LANCZOS)
-
-# ---------- 効果音 ----------
-SR = 44100
-def env(n, att, dec):
-    e = np.ones(n); a = max(1, int(att * SR)); e[:a] = np.linspace(0, 1, a)
-    return e * np.exp(-np.arange(n) / (dec * SR))
-
-def build_audio(path):
-    rng = np.random.default_rng(7)
-    buf = np.zeros(int(SR * DUR) + SR)
-    def add(t0, sig, gain):
-        i = int(t0 * SR); buf[i:i + len(sig)] += sig[: len(buf) - i] * gain
-    def swoosh(dur=0.35):
-        n = int(dur * SR); x = rng.standard_normal(n)
-        x = np.convolve(x, np.ones(24) / 24, mode="same")
-        x = x - np.convolve(x, np.ones(300) / 300, mode="same")
-        return x * np.sin(np.linspace(0, math.pi, n)) ** 2 * 3.0
-    def pop(f=880, dur=0.09):
-        n = int(dur * SR); tt = np.arange(n) / SR
-        return np.sin(2 * math.pi * f * tt) * env(n, 0.002, 0.025)
-    def tick():
-        n = int(0.05 * SR); tt = np.arange(n) / SR
-        return (np.sin(2 * math.pi * 2100 * tt) * 0.7 + rng.standard_normal(n) * 0.3) * env(n, 0.0005, 0.008)
-    def tone(f, dur, dec, harm=0.25):
-        n = int(dur * SR); tt = np.arange(n) / SR
-        return (np.sin(2 * math.pi * f * tt) + harm * np.sin(4 * math.pi * f * tt)) * env(n, 0.004, dec)
-    add(0.0, swoosh(), 0.22); add(0.2, pop(659.26), 0.45)
-    add(1.0, swoosh(), 0.18)
-    for i, ct in enumerate(CARD_T):
-        add(ct + 0.05, pop((783.99, 987.77, 1174.66)[i % 3]), 0.38)  # ソ・シ・レ（BGMの和音に合わせる）
-    seg = (T_COUNT1 - T_COUNT0) / 3
-    ticks = [T_COUNT0 + k * seg for k in range(3)]
-    for tk in ticks:
-        add(tk, tick(), 0.5)
-    add(T_REVEAL, tone(1046.5, 0.5, 0.18), 0.28); add(T_REVEAL + 0.12, tone(1568.0, 0.7, 0.25), 0.28)
-    add(T_WIPE0, swoosh(0.4), 0.25)
-    for f in (523.25, 659.25, 783.99):
-        add(T_SWITCH + 0.1, tone(f, 1.0, 0.35, 0.1), 0.12)
-    sfx = buf[: int(SR * DUR)]
-    sfx = sfx / max(1e-9, np.abs(sfx).max()) * 0.8
-    if BGM:
-        ml, mr = music.build_music(SR, DUR, T_COUNT0, T_REVEAL, ticks)
-        duck = sfx_duck(sfx)                      # 効果音が鳴るあいだは、BGMを少し下げる
-        ml, mr = ml * duck, mr * duck
-        g = 10 ** ((BGM_LUFS - music.loudness(ml, mr, SR)) / 20)
-        left, right = sfx + ml * g, sfx + mr * g
-    else:
-        left, right = sfx.copy(), sfx.copy()
-    g = 10 ** ((MIX_LUFS - music.loudness(left, right, SR)) / 20)
-    left, right = music.limit(left * g, right * g, SR)
-    pcm = (np.stack([left, right], axis=1) * 32767).astype(np.int16)
-    with wave.open(path, "wb") as w:
-        w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR)
-        w.writeframes(pcm.tobytes())
-
-BGM = True          # BGM を入れる
-BGM_LUFS = -20.0    # BGM だけの大きさ（効果音より控えめに）
-MIX_LUFS = -15.0    # 仕上がりの大きさ（YouTube の基準 -14 より少し小さめ）
-
-def sfx_duck(sfx, depth=0.45):
-    hop = int(0.005 * SR)
-    nf = (len(sfx) + hop - 1) // hop
-    pk = np.array([np.abs(sfx[i * hop:(i + 1) * hop]).max(initial=0.0) for i in range(nf)])
-    a = np.exp(-hop / SR / 0.15)
-    env_, cur = np.zeros(nf), 0.0
-    for i in range(nf):
-        cur = max(pk[i], a * cur); env_[i] = cur
-    g = 1.0 - depth * np.clip(env_ / 0.5, 0.0, 1.0)
-    return np.interp(np.arange(len(sfx)) / hop, np.arange(nf) + 0.5, g)
-
-def render(sc, out_path):
-    v = Video(sc)
+            info["声"] = "オン（読み上げの部品が無いので声なし）"
     tmp_wav = out_path + ".wav"
-    build_audio(tmp_wav)
-    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
-           "-i", tmp_wav, "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-shortest", out_path + ".part.mp4"]
-    p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-    for i in range(N):
-        p.stdin.write(v.frame(i / FPS).tobytes())
-    p.stdin.close()
-    if p.wait() != 0:
-        raise RuntimeError("ffmpeg に失敗しました")
-    os.replace(out_path + ".part.mp4", out_path)
-    os.remove(tmp_wav)
+    part = out_path + ".part.mp4"
+    try:
+        audio.build(look, tmp_wav, DUR, TIMES, bgm=theme.get("BGM", True), voices=voices)
+        tag = f"look={look_tag(theme)};style={style}"
+        cmd = [ffmpeg_bin(), "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{dk.W}x{dk.H}", "-r", str(FPS), "-i", "-",
+               "-i", tmp_wav, "-c:v", "libx264", "-preset", "slow", "-crf", "23", "-tune", "animation", "-pix_fmt", "yuv420p",
+               "-c:a", "aac", "-b:a", "128k", "-metadata", "comment=" + tag, "-movflags", "+faststart", "-shortest", part]
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        try:
+            for i in range(N):
+                p.stdin.write(look.frame(i / FPS).tobytes())
+        finally:
+            p.stdin.close()
+        if p.wait() != 0:
+            raise RuntimeError("ffmpeg に失敗しました")
+        if os.path.getsize(part) > MAX_MB * 1e6:      # 大きすぎたら、決めた大きさに収まるように圧縮しなおす
+            kbps = int((TARGET_MB * 8e6 / DUR - 128e3) / 1000)
+            again = part + ".2.mp4"
+            subprocess.run([ffmpeg_bin(), "-y", "-loglevel", "error", "-i", part, "-c:v", "libx264", "-preset", "slow", "-b:v", f"{kbps}k",
+                            "-maxrate", f"{int(kbps * 1.3)}k", "-bufsize", f"{kbps * 2}k", "-pix_fmt", "yuv420p", "-c:a", "copy",
+                            "-metadata", "comment=" + tag, "-movflags", "+faststart", again], check=True)
+            os.replace(again, part)
+        os.replace(part, out_path)
+    finally:
+        for f in (tmp_wav, part, part + ".2.mp4"):
+            if os.path.exists(f):
+                os.remove(f)
+    return look
+
 
 # ---------- 台本シート（CSV）→ 作る分を選ぶ ----------
 VARIANTS = {"塡": "填", "剝": "剥", "頰": "頬", "𠮟": "叱"}
@@ -364,6 +168,8 @@ def safe_text(s):
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
 def jst_today():
+    if os.environ.get("TODAY"):                 # 確かめ用：日付を決めて動かす
+        return datetime.date.fromisoformat(os.environ["TODAY"])
     return (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=9)).date()
 
 def parse_date(s):
@@ -373,16 +179,47 @@ def parse_date(s):
     except ValueError:
         return None
 
+def status_path():
+    return os.environ.get("STATUS_FILE") or os.path.join(HERE, "status.json")
+
 def write_status(st):
     """実行の結果を status.json に残す（Actions の画面を見なくても、置き場で結果がわかるように）。"""
     st = dict({"最終実行（日本時間）": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=9)).strftime("%Y-%m-%d %H:%M")}, **st)
-    with open(os.path.join(HERE, "status.json"), "w", encoding="utf-8") as f:
+    with open(status_path(), "w", encoding="utf-8") as f:
         json.dump(st, f, ensure_ascii=False, indent=1)
         f.write("\n")
 
+def script_of(r):
+    """CSV の1行 → 台本（足りなければ None と理由）"""
+    sc = {"q1": r.get("問題1行目", ""), "q2": r.get("問題2行目", ""), "a": r.get("選択肢A", ""), "b": r.get("選択肢B", ""),
+          "c": r.get("選択肢C", ""), "answer": r.get("正解", ""), "trap": r.get("ひっかけ", "")}
+    sc = {k: str(v or "").strip() for k, v in sc.items()}
+    if not (sc["q1"] and sc["a"] and sc["b"] and sc["c"] and sc["trap"] and sc["answer"].upper() in ("A", "B", "C")):
+        return None, "台本が足りない"
+    bad = []
+    for k in ("q1", "q2", "a", "b", "c", "trap"):
+        sc[k], b = safe_text(sc[k]); bad += b
+    if bad:
+        return None, "使えない文字：" + "".join(sorted(set(bad)))
+    return sc, ""
+
+def read_rows(cfg):
+    local = os.environ.get("CSV_FILE")          # 確かめ用：手元の CSV を読む
+    if local:
+        raw = open(local, encoding="utf-8-sig").read()
+    else:
+        url = os.environ.get("CSV_URL") or cfg.get("csv_url", "")
+        if not url.startswith("https://docs.google.com/"):
+            return None
+        raw = urllib.request.urlopen(url, timeout=60).read().decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(raw))
+    if "台本ID" not in (reader.fieldnames or []):
+        raise ValueError("公開したシートが「動画台本」ではないようです（1行目に 台本ID がありません）")
+    return list(reader)
+
 def main():
     st = {"結果": "", "台本の行数": 0, "作った動画": [], "見送った台本": [], "作れなかった台本": [], "消した動画": 0,
-          "次に作る予定": [], "エラー": ""}
+          "次に作る予定": [], "エラー": "", "見た目の版": "", "型": {}, "作り直した動画": [], "作り直せなかった動画": [], "声": ""}
     try:
         _main(st)
     except Exception as e:
@@ -396,21 +233,20 @@ def main():
         sys.exit(1)
 
 def _main(st):
-    cfg = json.load(open(os.path.join(HERE, "config.json"), encoding="utf-8"))
-    url = os.environ.get("CSV_URL") or cfg.get("csv_url", "")
-    if not url.startswith("https://docs.google.com/"):
+    cfg = load_config()
+    theme = load_theme(cfg)
+    tag = look_tag(theme)
+    st["見た目の版"] = tag
+    st["声"] = "オン" if theme.get("声", {}).get("使う") else "オフ"
+    rows = read_rows(cfg)
+    if rows is None:
         print("config.json の csv_url が未設定です。何もしません。")
         st["結果"] = "未設定（csv_url）"
         return
-    raw = urllib.request.urlopen(url, timeout=60).read().decode("utf-8-sig")
-    reader = csv.DictReader(io.StringIO(raw))
-    if "台本ID" not in (reader.fieldnames or []):
-        raise ValueError("公開したシートが「動画台本」ではないようです（1行目に 台本ID がありません）")
-    rows = list(reader)
     today = jst_today()
     ahead = int(cfg.get("days_ahead", 3))
     keep = int(cfg.get("keep_days", 10))
-    vdir = os.path.join(HERE, "videos")
+    vdir = os.environ.get("VIDEOS_DIR") or os.path.join(HERE, "videos")
     os.makedirs(vdir, exist_ok=True)
     dates = {}
     for r in rows:
@@ -428,29 +264,37 @@ def _main(st):
         if d < today - datetime.timedelta(days=1):
             continue
         out = os.path.join(vdir, vid + ".mp4")
+        redo = False
         if os.path.exists(out):
+            # 見た目の版が変わっていて、まだ公開していない（公開予定日が今日以降）なら作り直す
+            if d < today or read_tag(out) == tag:
+                continue
+            redo = True
+        sc, why = script_of(r)
+        if sc is None:
+            print("見送り：", vid, why)
+            st["見送った台本"].append(vid if why == "台本が足りない" else vid + "（" + why + "）")
             continue
-        sc = {"q1": r.get("問題1行目", ""), "q2": r.get("問題2行目", ""), "a": r.get("選択肢A", ""), "b": r.get("選択肢B", ""),
-              "c": r.get("選択肢C", ""), "answer": r.get("正解", ""), "trap": r.get("ひっかけ", "")}
-        if not (sc["q1"] and sc["a"] and sc["b"] and sc["c"] and sc["trap"] and sc["answer"].strip().upper() in ("A", "B", "C")):
-            print("台本が足りないので見送り：", vid); st["見送った台本"].append(vid)
-            continue
-        bad = []
-        for k in ("q1", "q2", "a", "b", "c", "trap"):
-            sc[k], b = safe_text(sc[k]); bad += b
-        if bad:
-            print("動画の文字に無いので見送り：", vid, "".join(bad)); st["見送った台本"].append(vid + "（使えない文字：" + "".join(sorted(set(bad))) + "）")
-            continue
+        style = choose_look(vid, theme, r)
+        info = {}
         try:
-            render(sc, out)
+            # 作り直しのときは、別の名前で作ってから入れかえる（失敗したら古い動画を残す）
+            tmp = out + ".new.mp4" if redo else out
+            render(sc, tmp, theme, style, info)
+            if redo:
+                os.replace(tmp, out)
         except Exception as e:
-            print("作れませんでした：", vid, e); st["作れなかった台本"].append(vid)
-            for p in (out + ".part.mp4", out + ".wav"):
-                if os.path.exists(p):
-                    os.remove(p)
+            print("作れませんでした：", vid, e)
+            (st["作り直せなかった動画"] if redo else st["作れなかった台本"]).append(vid)
+            for f in os.listdir(vdir):                 # 作りかけのファイルを片づける（元の動画はそのまま）
+                if f.startswith(vid + ".mp4.") or f.startswith(vid + ".mp4.new"):
+                    os.remove(os.path.join(vdir, f))
             continue
-        print("作成：", vid, d)
-        st["作った動画"].append(vid)
+        if info.get("声"):
+            st["声"] = info["声"]
+        st["型"][vid] = style
+        print(("作り直し：" if redo else "作成："), vid, d, style)
+        (st["作り直した動画"] if redo else st["作った動画"]).append(vid)
     st["次に作る予定"] = st["次に作る予定"][:3]
     # 古い動画を消す（置き場を軽く保つ）
     for name in os.listdir(vdir):
@@ -460,13 +304,88 @@ def _main(st):
         d = dates.get(vid)
         if d is not None and d < today - datetime.timedelta(days=keep):
             os.remove(os.path.join(vdir, name)); st["消した動画"] += 1
-    print(f"作成 {len(st['作った動画'])} 本・見送り {len(st['見送った台本'])} 本・失敗 {len(st['作れなかった台本'])} 本・削除 {st['消した動画']} 本")
+    print(f"作成 {len(st['作った動画'])} 本・作り直し {len(st['作り直した動画'])} 本・見送り {len(st['見送った台本'])} 本・"
+          f"失敗 {len(st['作れなかった台本']) + len(st['作り直せなかった動画'])} 本・削除 {st['消した動画']} 本")
 
+
+# ---------- 確かめ用 ----------
 SAMPLE = {"q1": "「高度150m以上」の空域", "q2": "150mは*どこから*測る？", "a": "海抜高度（標高）", "b": "直下の地表・水面",
           "c": "飛行場の標点", "answer": "B", "trap": "ひっかけ：*海抜*ではない！"}
 
+SHEET_T = [(0.4, "問題"), (2.6, "3択"), (6.3, "カウントダウン"), (8.45, "正解"), (10.6, "ひっかけ"), ((TR0 + TR1) / 2, "転換"), (13.3, "締め")]
+
+
+def contact_sheet(sc, theme, style, path, guides=False):
+    """見せ場の静止画を横に並べた1枚の画像。guides=True なら、YouTube の文字やボタンが重なる所を赤く示す。"""
+    from PIL import Image, ImageDraw
+    look = make_look(sc, theme, style)
+    tw, th = 360, 640
+    lab_h = 44
+    sheet = Image.new("RGB", (tw * len(SHEET_T) + 8 * (len(SHEET_T) + 1), th + lab_h + 16), (235, 236, 240))
+    d = ImageDraw.Draw(sheet)
+    f = dk.font("Bold", 22 / dk.R)
+    for k, (t, name) in enumerate(SHEET_T):
+        fr = look.frame(t).resize((tw, th), Image.LANCZOS)
+        if guides:
+            ov = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
+            od = ImageDraw.Draw(ov)
+            s = tw / dk.LW
+            od.rectangle([0, dk.SAFE["bottom"] * s, tw, th], fill=(255, 0, 0, 70))
+            od.rectangle([dk.SAFE["right"] * s, 0, tw, th], fill=(255, 0, 0, 50))
+            od.rectangle([0, 0, tw, dk.SAFE["top"] * s], fill=(255, 0, 0, 50))
+            fr = Image.alpha_composite(fr.convert("RGBA"), ov).convert("RGB")
+        x = 8 + k * (tw + 8)
+        sheet.paste(fr, (x, 8))
+        d.text((x + tw / 2, th + 8 + lab_h / 2 + 4), f"{t:.1f}秒 {name}", font=f, fill=(40, 44, 60), anchor="mm")
+    sheet.save(path, optimize=True)
+
+
+def make_samples(outdir, sc=None, guides_dir=None):
+    theme = load_theme()
+    os.makedirs(outdir, exist_ok=True)
+    for style in LOOKS:
+        out = os.path.join(outdir, style + ".mp4")
+        render(sc or SAMPLE, out, theme, style)
+        contact_sheet(sc or SAMPLE, theme, style, os.path.join(outdir, style + ".png"))
+        if guides_dir:
+            contact_sheet(sc or SAMPLE, theme, style, os.path.join(guides_dir, style + "_目安つき.png"), guides=True)
+        print("見本：", out)
+
+
+def render_csv(path, outdir, sheets=False):
+    """CSV の全行を作る（日付・状態は見ない）。作れなかった行の数を返す"""
+    theme = load_theme()
+    os.makedirs(outdir, exist_ok=True)
+    rows = list(csv.DictReader(open(path, encoding="utf-8-sig")))
+    bad = 0
+    for r in rows:
+        vid = str(r.get("台本ID", "")).strip()
+        sc, why = script_of(r)
+        if sc is None:
+            print("見送り：", vid, why); continue
+        style = choose_look(vid, theme, r)
+        try:
+            render(sc, os.path.join(outdir, vid + ".mp4"), theme, style)
+            if sheets:
+                contact_sheet(sc, theme, style, os.path.join(outdir, vid + ".png"), guides=True)
+            print("作成：", vid, style)
+        except Exception as e:
+            bad += 1
+            print("作れませんでした：", vid, type(e).__name__, e)
+    return bad
+
+
 if __name__ == "__main__":
-    if len(sys.argv) >= 3 and sys.argv[1] == "--sample":
-        render(SAMPLE, sys.argv[2]); print("作成：", sys.argv[2])
+    args = sys.argv[1:]
+    style = None
+    if "--style" in args:
+        i = args.index("--style"); style = args[i + 1]; del args[i:i + 2]
+    if len(args) >= 2 and args[0] == "--sample":
+        th = load_theme()
+        render(SAMPLE, args[1], th, style or th["型の選び方"]["型"][0]); print("作成：", args[1])
+    elif args and args[0] == "--samples":
+        make_samples(os.path.join(HERE, "samples"), guides_dir=args[1] if len(args) > 1 else None)
+    elif len(args) >= 3 and args[0] == "--csv":
+        sys.exit(1 if render_csv(args[1], args[2], sheets="--sheets" in args) else 0)
     else:
         main()
