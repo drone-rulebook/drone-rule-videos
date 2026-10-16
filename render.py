@@ -103,7 +103,7 @@ def render(sc, out_path, theme, style, info=None):
     vcfg = theme.get("声", {})
     voices = []
     if vcfg.get("使う"):
-        if voice.available():
+        if voice.available(vcfg):
             voices, skipped = voice.lines(sc, theme["文言"], vcfg, TIMES, audio.SR)
             if voices:
                 look.voice_credit = safe_text(vcfg.get("クレジット", ""))[0]
