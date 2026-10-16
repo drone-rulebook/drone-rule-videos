@@ -544,6 +544,11 @@ def main():
         print("  足りない行：", "、".join(log["足りない行"]))
     if log["重なり"]:
         print("  重なった問題ID：", "、".join(sorted(set(log["重なり"]))))
+    if os.environ.get("GITHUB_ACTIONS"):
+        # Actions の実行結果の画面に1行で出す（あとから「どの問題に動画が付いたか」を確かめるため）
+        with_video = sorted((q["id"] for q in questions if q["video"]), key=lambda s: (len(s), s))
+        print(f"::notice title=サイトの中身::使う問題 {len(questions)}問・動画リンクあり "
+              f"{len(with_video)}問（問題ID {'、'.join(with_video) or 'なし'}）")
     if not questions:
         raise SystemExit("使える問題が1問もありません。公開中のサイトはそのままにします。")
 
