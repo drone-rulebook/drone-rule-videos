@@ -58,8 +58,8 @@ def load_questions(raw):
         if r.get("状態") not in USE_STATES or "限定公開" in r.get("メモ", ""):
             log["使わない行"] += 1
             continue
-        qid = r.get("問題ID", "")
-        ans = r.get("正解", "").upper()
+        qid = unicodedata.normalize("NFKC", r.get("問題ID", ""))
+        ans = unicodedata.normalize("NFKC", r.get("正解", "")).upper()
         if not ID_RE.match(qid) or ans not in ("A", "B", "C") or not all(
                 r.get(k) for k in ("タイトル", "問題1行目", "選択肢A", "選択肢B", "選択肢C", "ひっかけ")):
             log["足りない行"].append(r.get("台本ID") or qid or "?")
@@ -225,7 +225,7 @@ class Site:
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <title>{esc(head_title)}</title>
 <meta name="description" content="{esc(desc)}">
-<link rel="canonical" href="{esc(canon)}">
+{'<meta name="robots" content="noindex">' if path == "404.html" else f'<link rel="canonical" href="{esc(canon)}">'}
 <link rel="icon" href="{FAVICON}">
 <meta name="theme-color" content="{esc(self.cfg['colors']['primary'])}">
 <meta property="og:type" content="{'website' if path == '' else 'article'}">
@@ -309,7 +309,7 @@ class Site:
             for k, c in enumerate(q["choices"]))
         if q["video"]:
             short = f'<a class="btn btn-sub" href="{esc(q["video"])}" rel="noopener">{esc(t["short_link"])}</a>'
-        elif q["date"] and q["date"] >= self.today:
+        elif q["date"] and q["date"] > self.today:
             short = f'<p>{esc(fill(t["short_planned"], date=jdate(q["date"])))}</p>'
         else:
             short = f'<p>{esc(t["short_unknown"])}</p>'
@@ -321,7 +321,7 @@ class Site:
 <div class="q">{self.qtext(q)}</div>
 <ol class="choices" id="choices">{choices}</ol>
 <details class="reveal" id="reveal"><summary class="btn btn-main">{esc(t['show_answer'])}</summary>
-<div class="answer" id="answer"><p class="res" id="res"></p>
+<div class="answer" id="answer" tabindex="-1"><p class="res" id="res"></p>
 <p><b>{esc(t['answer_label'])}：{L[q['answer']]}</b>　{rich(q['choices'][q['answer']])}</p>
 <p class="trap"><span class="label">{esc(t['trap_label'])}</span><br>{rich(q['trap'])}</p></div></details>
 </section>
@@ -337,7 +337,7 @@ class Site:
 (function(){{var A={q['answer']},L="ABC",bs=document.querySelectorAll("#choices .choice"),d=document.getElementById("reveal"),r=document.getElementById("res");
 for(var i=0;i<bs.length;i++)bs[i].addEventListener("click",function(){{var k=+this.getAttribute("data-i");
 for(var j=0;j<bs.length;j++){{bs[j].disabled=true;if(j===A)bs[j].classList.add("ok");else if(j===k)bs[j].classList.add("ng");}}
-r.className="res "+(k===A?"ok":"ng");r.textContent=k===A?{json.dumps(t['quiz_correct'], ensure_ascii=False)}:{json.dumps(t['quiz_wrong'], ensure_ascii=False)};d.open=true;}});
+r.className="res "+(k===A?"ok":"ng");r.textContent=k===A?{json.dumps(t['quiz_correct'], ensure_ascii=False)}:{json.dumps(t['quiz_wrong'], ensure_ascii=False)};d.open=true;document.getElementById("answer").focus({{preventScroll:true}});}});
 d.addEventListener("toggle",function(){{if(d.open)for(var j=0;j<bs.length;j++){{bs[j].disabled=true;if(j===A)bs[j].classList.add("ok");}}}});}})();
 </script>"""
         desc = fill(t["question_description"], title=plain(q["title"]))

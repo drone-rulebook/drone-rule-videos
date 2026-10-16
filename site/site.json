@@ -31,7 +31,7 @@
     "quiz_score": "{total}問中 {n}問 正解",
     "quiz_all_correct": "全問正解です。",
     "quiz_missed_heading": "まちがえた問題",
-    "quiz_retry": "もう一度（問題が入れかわります）",
+    "quiz_retry": "もう一度ちょうせんする",
     "share_label": "Xで結果をシェア",
     "share_text": "ドローン国家資格（二等）学科のひっかけ問題ミニ模試で {total}問中 {n}問 正解でした！ #ドローン国家資格",
 

@@ -8,6 +8,7 @@ on:
     paths:
       - "site/**"
       - "fonts/**"
+      - "config.json"
       - "tests/sample.csv"
       - "tests/test_site.py"
       - ".github/workflows/site.yml"
