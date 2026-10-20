@@ -1,0 +1,60 @@
+name: 英語版の見本（一時的）
+
+on:
+  push:
+    branches: [en-sample]
+    paths-ignore:
+      - "en_samples/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: en-sample
+  cancel-in-progress: true
+
+jobs:
+  sample:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: 道具を入れる
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q pillow numpy imageio-ffmpeg kokoro-onnx
+      - name: 英語の声のモデルを取る
+        run: |
+          mkdir -p models
+          curl -sSfL -o models/kokoro-v1.0.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/kokoro-v1.0.onnx
+          curl -sSfL -o models/voices-v1.0.bin https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.0.bin
+          ls -la models
+      - name: 声を試す
+        run: |
+          python - <<'PY'
+          import json, sys
+          sys.path.insert(0, ".")
+          import voice
+          t = json.load(open("themes/part107.json", encoding="utf-8"))
+          print("available:", voice.available(t["声"]), voice._engine.get("name"))
+          for s in ["Max altitude: 400 feet above ground level. Within 400 feet of a 600-foot tower, how high?",
+                    "The answer is B.", "It's 400 feet above the tower's top!"]:
+              x = voice.synth(s, 1.05, 44100)
+              print(round(len(x) / 44100, 2), "sec:", s)
+          PY
+      - name: 見本をつくる
+        run: |
+          rm -rf en_samples
+          python en_sample.py en_samples
+          ls -la en_samples
+      - name: 見本を置く
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add en_samples
+          git commit -q -m "英語版の見本" || echo "変更なし"
+          git push -q

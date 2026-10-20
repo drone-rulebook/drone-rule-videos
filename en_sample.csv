@@ -1,0 +1,4 @@
+台本ID,公開予定日,問題ID,タイトル,問題1行目,問題2行目,選択肢A,選択肢B,選択肢C,正解,ひっかけ,状態
+e001,2026-10-21,E1,Cloud clearance trap,Cloud clearance rule.,How far *below* a cloud must you stay?,500 ft,"1,000 ft","2,000 ft",A,"Trap: 2,000 ft is the *horizontal* distance!",待ち
+e002,2026-10-22,E2,Accident report trap,A crash damages a car.,Report to the FAA above what cost?,$500,"$1,000","$2,500",A,"Trap: $500, and your drone *doesn't count*!",待ち
+e003,2026-10-23,E3,400 ft tower trap,Max altitude: 400 ft AGL.,"Within 400 ft of a 600-ft tower, how high?",400 ft AGL,"1,000 ft AGL",600 ft AGL,B,Trap: It's 400 ft above the *tower's top*!,待ち

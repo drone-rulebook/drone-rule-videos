@@ -77,10 +77,11 @@ class Look:
     def trap_parts(self):
         """「ひっかけ：〜」を 見出し と 本文 に分ける"""
         trap = self.sc["trap"]
-        if "：" in trap:
-            head, body = trap.split("：", 1)
-            if 0 < len(head.replace("*", "")) <= 8:
-                return head.replace("*", ""), body
+        for sep in ("：", ":"):                   # 英語の「Trap: 〜」にも対応
+            if sep in trap:
+                head, body = trap.split(sep, 1)
+                if 0 < len(head.replace("*", "")) <= 8:
+                    return head.replace("*", ""), body.strip()
         return self.words.get("ひっかけ見出し", "ひっかけ"), trap
 
     def trap_block(self, base, accent, max_w=520, px=34, min_px=24, weight="Bold", room=150):

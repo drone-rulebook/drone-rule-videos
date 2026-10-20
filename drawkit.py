@@ -97,11 +97,22 @@ def _kind(ch):
 
 PARTICLES = set("はがをにでともやのへ")
 NO_BREAK_WORDS = []      # 途中で改行しない言葉（themes の「改行しない言葉」から入る）
+LANG = "ja"              # 文字の言語（themes の「言語」から入る）。"en" なら単語の途中で改行しない
 
 
 def _break_score(prev, nxt):
     """prev と nxt の間で改行してよいかの点数（大きいほど自然。0＝言葉の途中なので避けたい）"""
     a, b = prev[0], nxt[0]
+    if LANG == "en":                     # 英語：空白の後ろで改行する。単語の途中では切らない
+        if a == " " or b == " ":
+            s = 3
+        elif a in "-/–—" and b != " ":
+            s = 2
+        else:
+            return -1
+        if prev[2] and nxt[2]:
+            s -= 1
+        return s
     if b in NO_HEAD or a in NO_TAIL:
         return -1
     if a in "、。，．！？」』）】・：；":
@@ -134,7 +145,7 @@ def _wrap_line(chars, f, max_px, nice=True):
         if cur and w + cw > max_px:
             seq = cur + [c]
             glue = {g - start for g in glue_all}
-            look = max(1, min(10, int(len(cur) * 0.6)))
+            look = len(cur) if LANG == "en" else max(1, min(10, int(len(cur) * 0.6)))
             best, best_s = None, 0
             for k in (range(len(cur), max(0, len(cur) - look), -1) if nice else ()):   # 改行は seq[k-1] と seq[k] の間
                 if k < 1:
@@ -158,6 +169,16 @@ def _wrap_line(chars, f, max_px, nice=True):
     return lines
 
 
+def _strip(line):
+    """行の頭と終わりの空白を落とす（英語の改行で空白が残らないように）"""
+    a, b = 0, len(line)
+    while a < b and line[a][0] == " ":
+        a += 1
+    while b > a and line[b - 1][0] == " ":
+        b -= 1
+    return line[a:b]
+
+
 def _merge(chars):
     out = []
     for ch, col, emp in chars:
@@ -175,11 +196,13 @@ def layout(text_lines, weight, max_w, max_lines, px, min_px, step=2):
     p, fallback, lines = px, None, []
     while True:
         f = font(weight, p)
-        for nice in (True, False):
+        for nice in ((True,) if LANG == "en" else (True, False)):   # 英語は単語の途中で切らない（入らなければ文字を小さくする）
             lines, orphan = [], False
             for segs in text_lines:
                 chars = [(ch, col, emp) for s, col, emp in segs for ch in s]
                 ls = _wrap_line(chars, f, max_w * R, nice) if chars else [[]]
+                if LANG == "en":
+                    ls = [_strip(l) for l in ls]
                 orphan |= len(ls) > 1 and len(ls[-1]) <= 3       # 折り返した最後の行が3文字以下
                 lines += ls
             fits = len(lines) <= max_lines
