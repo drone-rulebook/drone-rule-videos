@@ -114,24 +114,42 @@ def fit(text, window, speed, sr, max_speed=1.7):
     return None
 
 
-def lines(sc, words, cfg, times, sr):
-    """動画の中で読む声のリスト [(開始の秒, 音)] と、読めなかった所の名前"""
+def question_texts(sc, tbl):
+    """問題の読み上げの候補（1・2行目の全文 → 長すぎたら2行目（問いの部分）だけ）"""
+    q = reading(sc["q1"], tbl) + ("。" + reading(sc["q2"], tbl) if sc.get("q2") else "")
+    q2 = reading(sc["q2"], tbl) if sc.get("q2") else ""
+    return [q] + ([q2] if q2 else [])
+
+
+def say(texts, window, speed, sr):
+    """texts を順に試し、window 秒に収まる最初の音と、その文を返す（どれも収まらなければ (None, None)）"""
+    for text in texts:
+        x = fit(text, window, speed, sr)
+        if x is not None:
+            return x, text
+    return None, None
+
+
+def lines(sc, words, cfg, times, sr, cta=False, question=True):
+    """動画の中で読む声のリスト [(開始の秒, 音)] と、読めなかった所の名前。
+    times は styles.base.Timeline.times()。question=False なら問題は読まない（先に別で読んで、時刻表を合わせたとき）。
+    cta=True なら、締めの声（文言「締めの声」）も times["cta"] の間に読む。"""
     tbl = cfg.get("読み替え", {})
     speed = float(cfg.get("速さ", 1.15))
-    q = reading(sc["q1"], tbl) + ("。" + reading(sc["q2"], tbl) if sc.get("q2") else "")
     letter = sc["answer"].strip().upper()
     trap = sc["trap"].split("：", 1)[1] if "：" in sc["trap"] else sc["trap"]
-    q2 = reading(sc["q2"], tbl) if sc.get("q2") else ""
-    plan = [("問題", [q] + ([q2] if q2 else []), times["q"]),     # 長すぎたら、2行目（問いの部分）だけを読む
-            ("正解", [reading(words.get("正解", "正解は"), tbl) + "、" + letter + "。", letter + "。"], times["ans"]),
-            ("ひっかけ", [reading(trap, tbl)], times["trap"])]
+    plan = []
+    if question:
+        plan.append(("問題", question_texts(sc, tbl), times["q"]))      # 長すぎたら、2行目（問いの部分）だけを読む
+    plan += [("正解", [reading(words.get("正解", "正解は"), tbl) + "、" + letter + "。", letter + "。"], times["ans"]),
+             ("ひっかけ", [reading(trap, tbl)], times["trap"])]
+    if cta and times.get("cta") and words.get("締めの声"):
+        plan.append(("締めの声", [reading(words["締めの声"], tbl)], times["cta"]))
     out, skipped = [], []
     for name, texts, (t0, t1) in plan:
-        for text in texts:
-            x = fit(text, t1 - t0, speed, sr)
-            if x is not None:
-                out.append((t0, x))
-                break
+        x, _ = say(texts, t1 - t0, speed, sr)
+        if x is not None:
+            out.append((t0, x))
         else:
             skipped.append(name)
     return out, skipped
