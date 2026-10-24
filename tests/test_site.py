@@ -37,6 +37,26 @@ class SiteTest(unittest.TestCase):
             for p in self.pages:
                 self.assertNotIn(bad, readp(p), p)
 
+    def test_昼の枠の行は使わない(self):
+        import csv, io
+        rows = list(csv.reader(io.StringIO(readp(os.path.join(ROOT, "tests", "sample.csv")))))
+        rows[0].append("枠")
+        for r in rows[1:]:
+            r.append("")
+        rows.append(["h001", "2026/10/12", "2026-10-06_2100_ihan", "庭で、これ違反？｜ドローン国家資格・二等学科", "DID内の自宅の庭で飛行",
+                     "これ違反？", "違反になる", "違反にならない", "", "A", "ポイント：空域", "投稿済み",
+                     "https://www.youtube.com/shorts/hiru00001", "2026/10/12 12:00", "公開", "", "", "", "昼"])
+        d = tempfile.mkdtemp(prefix="site-hiru-")
+        src = os.path.join(d, "in.csv")
+        with open(src, "w", encoding="utf-8", newline="") as f:
+            csv.writer(f).writerows(rows)
+        out = os.path.join(d, "out")
+        p = subprocess.run([sys.executable, os.path.join(ROOT, "site", "build.py"), "--csv", src, "--out", out, "--today", "2026-10-16"],
+                           check=True, capture_output=True, text=True)
+        self.assertEqual(sorted(os.listdir(os.path.join(out, "q"))), sorted(os.listdir(os.path.join(OUT, "q"))))
+        self.assertNotIn("h001", p.stdout)
+        self.assertNotIn("hiru00001", "".join(readp(os.path.join(dp, f)) for dp, _, fs in os.walk(out) for f in fs if f.endswith(".html")))
+
     def test_重なりは動画のある行(self):
         s = read("q", "Q002", "index.html")
         self.assertIn("https://youtu.be/sample0002", s)

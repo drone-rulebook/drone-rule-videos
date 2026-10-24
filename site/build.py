@@ -55,8 +55,8 @@ def load_questions(raw):
     for r in reader:
         r = {k: str(v or "").strip() for k, v in r.items() if k}
         log["行数"] += 1
-        if r.get("状態") not in USE_STATES or "限定公開" in r.get("メモ", ""):
-            log["使わない行"] += 1
+        if r.get("状態") not in USE_STATES or "限定公開" in r.get("メモ", "") or r.get("枠") == "昼":
+            log["使わない行"] += 1          # 昼の枠（「これ違反？」の2択ショート）は、サイトの問題には入れない
             continue
         qid = unicodedata.normalize("NFKC", r.get("問題ID", ""))
         ans = unicodedata.normalize("NFKC", r.get("正解", "")).upper()
