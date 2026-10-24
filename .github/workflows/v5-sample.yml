@@ -1,0 +1,63 @@
+name: 版5の見本（一時的）
+
+on:
+  push:
+    branches: [v5-zunda]
+    paths-ignore:
+      - "v5_samples/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v5-sample
+  cancel-in-progress: true
+
+jobs:
+  sample:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q pillow numpy imageio-ffmpeg
+      - name: VOICEVOX を立てる
+        run: |
+          docker run -d --rm --name voicevox -p 127.0.0.1:50021:50021 voicevox/voicevox_engine:cpu-latest
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:50021/version && break; sleep 3; done
+      - name: 見本をつくる（次に出る3本と2択）
+        run: |
+          rm -rf v5_samples && mkdir -p v5_samples
+          python - <<'PY'
+          import json, os, sys
+          sys.path.insert(0, ".")
+          import render
+          cfg = render.load_config(); th = render.load_theme(cfg)
+          rows = {r["台本ID"].strip(): r for r in render.read_rows(cfg)}
+          out = {}
+          jobs = [(v, rows[v]) for v in ("v011", "v012", "v013") if v in rows]
+          two = {"問題1行目": "DID内の*自宅の庭*で200gの機体を昼・目視内で飛行（許可なし）", "問題2行目": "これ違反？",
+                 "選択肢A": "違反になる", "選択肢B": "違反にならない", "選択肢C": "", "正解": "A", "ひっかけ": "ポイント：規制は土地でなく*空域*"}
+          jobs.append(("w902", two))
+          for vid, r in jobs:
+              sc, why = render.script_of(r)
+              if sc is None:
+                  out[vid] = "見送り：" + why; continue
+              style = render.choose_look(vid, th, r)
+              info = {}
+              render.render(sc, f"v5_samples/{vid}_{style}.mp4", th, style, info, vid=vid)
+              render.contact_sheet(sc, th, style, f"v5_samples/{vid}_{style}.png", vid=vid)
+              out[vid] = dict(info, 型=style, 問題=sc["q1"] + " " + sc.get("q2", ""))
+          json.dump(out, open("v5_samples/info.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+          print(json.dumps(out, ensure_ascii=False, indent=1))
+          PY
+      - name: 見本を置く
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add v5_samples
+          git commit -q -m "版5の見本（ずんだもんの声）" || echo "変更なし"
+          git push -q
