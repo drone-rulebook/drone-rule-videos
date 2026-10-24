@@ -168,9 +168,10 @@ def _merge(chars):
     return out
 
 
-def layout(text_lines, weight, max_w, max_lines, px, min_px, step=2):
+def layout(text_lines, weight, max_w, max_lines, px, min_px, step=2, cap=0.84, keep_emphasis=False):
     """文字の大きさを px から min_px まで下げながら、横幅 max_w・max_lines 行に収まる大きさを探す。
-    言葉の切れ目で改行でき、最後の行がぽつんと短くならない大きさを優先する。ただしそのために小さくしすぎない（元の84%まで）。
+    言葉の切れ目で改行でき、最後の行がぽつんと短くならない大きさを優先する。ただしそのために小さくしすぎない（元の cap 倍まで）。
+    keep_emphasis=True なら、強調（*〜*）のまとまりの途中で改行しない大きさも優先する（問題文の大事な語を分けないため）。
     text_lines: 段落ごとの [(文字, 色, 強調)]。返り値：(行のリスト, 文字の大きさ, 収まったか)"""
     p, fallback, lines = px, None, []
     while True:
@@ -181,13 +182,15 @@ def layout(text_lines, weight, max_w, max_lines, px, min_px, step=2):
                 chars = [(ch, col, emp) for s, col, emp in segs for ch in s]
                 ls = _wrap_line(chars, f, max_w * R, nice) if chars else [[]]
                 orphan |= len(ls) > 1 and len(ls[-1]) <= 3       # 折り返した最後の行が3文字以下
+                if keep_emphasis:
+                    orphan |= any(a and b and a[-1][2] and b[0][2] for a, b in zip(ls[:-1], ls[1:]))   # 強調の途中で改行
                 lines += ls
             fits = len(lines) <= max_lines
             if fits and nice and not orphan:
                 return [_merge(l) for l in lines], p, True
             if fits and fallback is None:
                 fallback = ([_merge(l) for l in lines], p, True)
-        if fallback and p - step < max(min_px, fallback[1] * 0.84):
+        if fallback and p - step < max(min_px, fallback[1] * cap):
             return fallback
         if p <= min_px:
             return fallback or ([_merge(l) for l in lines], p, False)
@@ -197,8 +200,8 @@ def layout(text_lines, weight, max_w, max_lines, px, min_px, step=2):
 class TextBlock:
     """折り返し済みの文字のかたまり。行ごとの画像と、強調部分の位置を持つ。"""
 
-    def __init__(self, text_lines, weight, max_w, max_lines, px, min_px, line_h=1.32, align="left"):
-        self.lines, self.px, self.fits = layout(text_lines, weight, max_w, max_lines, px, min_px)
+    def __init__(self, text_lines, weight, max_w, max_lines, px, min_px, line_h=1.32, align="left", cap=0.84, keep_emphasis=False):
+        self.lines, self.px, self.fits = layout(text_lines, weight, max_w, max_lines, px, min_px, cap=cap, keep_emphasis=keep_emphasis)
         self.weight, self.align = weight, align
         self.line_h = self.px * line_h
         f = font(weight, self.px)

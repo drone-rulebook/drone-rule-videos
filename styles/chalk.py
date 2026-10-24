@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""型2「黒板」：深緑の黒板に、チョークで書いていく。締めの前に黒板消しが横切る。"""
+"""型2「黒板」：深緑の黒板に、チョークで書いていく。最後に黒板消しが横切って、問題だけの黒板（1こま目と同じ）に戻る。"""
 import math
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 import drawkit as dk
 from drawkit import paste, prog, ease_in_out, aa_shape, cached
 from .hand import Hand
-from .base import TR0, TR1
+from .base import CONTENT_BOTTOM
 
 
 class Chalk(Hand):
@@ -48,20 +48,6 @@ class Chalk(Hand):
         img = dk.vignette(img, 0.3)
         return img
 
-    def make_bg_end(self):
-        """黒板消しで消したあと（消しあとが少し残る）"""
-        R = dk.R
-        img = self.bg.convert("RGB")
-        smear = Image.new("L", (dk.W, dk.H), 0)
-        d = ImageDraw.Draw(smear)
-        for k in range(7):
-            y0 = 100 + k * 160
-            pts = [(x * R, (y0 + 40 * math.sin(x / 90 + k)) * R) for x in range(-20, 760, 20)]
-            d.line(pts, fill=16, width=int(120 * R))
-        smear = smear.filter(ImageFilter.GaussianBlur(20 * R))
-        img = Image.composite(Image.new("RGB", img.size, (205, 220, 210)), img, smear)
-        return img.convert("RGBA")
-
     def eraser(self):
         def make():
             def fn(d, k, pad):
@@ -74,20 +60,23 @@ class Chalk(Hand):
         return cached(("eraser",), make)
 
     def transition(self, t):
-        """黒板消しが左から右へ横切って、消していく"""
-        p = ease_in_out(prog(t, TR0, TR1))
+        """黒板消しが左から右へ横切って、答えとひっかけを消し、問題だけの黒板に戻す"""
+        T = self.T
+        p = ease_in_out(prog(t, T.tr0, T.tr1))
         ex = -120 + 960 * p
         cv = self.bg.copy()
         self.scene(cv, t)
         X = int(ex * dk.R)
         if X > 0:
-            clean = self.bg_end.crop((0, 0, min(dk.W, X), dk.H))
-            cv.alpha_composite(clean, dest=(0, 0))
-        bob = 380 * math.sin((t - TR0) * 2 * math.pi * 2.2)
-        paste(cv, self.eraser(), ex - 70, 640 + bob, anchor="cc", angle=8)
+            clean = self.hook_state(t - T.dur)
+            cv.alpha_composite(clean.crop((0, 0, min(dk.W, X), dk.H)), dest=(0, 0))
+        top, bot = self.card_y[0], CONTENT_BOTTOM
+        mid, amp = (top + bot) / 2, max(40, (bot - top) / 2 - 60)
+        bob = amp * math.sin((t - T.tr0) * 2 * math.pi * 2.2)
+        paste(cv, self.eraser(), ex - 70, mid + bob, anchor="cc", angle=8)
         return cv
 
     def sounds(self):
         ev = super().sounds()
-        ev.append(("eraser", TR0, 0.4, TR1 - TR0))
+        ev.append(("eraser", self.T.tr0, 0.4, self.T.tr1 - self.T.tr0))
         return ev

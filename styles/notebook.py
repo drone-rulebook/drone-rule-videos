@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""型3「ノート」：罫線ノートに青いボールペンで書く。強調は黄色のマーカー、正解は赤ペンの丸、ひっかけはふせん。締めの前にページをめくる。"""
+"""型3「ノート」：罫線ノートに青いボールペンで書く。強調は黄色のマーカー、正解は赤ペンの丸、ひっかけはふせん。
+最後はページをめくって、問題だけのページ（1こま目と同じ）に戻る。"""
 import numpy as np
 from PIL import Image, ImageDraw
 import drawkit as dk
 from drawkit import paste, prog, ease_out, ease_in_out, with_alpha, cached, shadow
 from .hand import Hand
-from .base import TRAP, TR0, TR1, Q_X, CARD_X, CARD_W
+from .base import Q_X, CARD_X, CARD_W
 
 
 class Notebook(Hand):
@@ -43,11 +44,11 @@ class Notebook(Hand):
         pass
 
     def emphasis_under(self, cv, t):
-        """強調の文字の下に、黄色のマーカーを引く（文字を書き終えてから）"""
+        """強調の文字の下に、黄色のマーカーを引く（1こま目のすぐあと）"""
         mk = self.c["マーカー"]
         lh = self.qb.line_h
         for k, (i, x0, x1) in enumerate(self.qb.spans):
-            f = ease_out(prog(t, 0.9 + 0.1 * k, 1.15 + 0.1 * k))
+            f = ease_out(prog(t, 0.15 + 0.1 * k, 0.4 + 0.1 * k))
             if f <= 0:
                 continue
             w = (x1 - x0 + 8) * f
@@ -58,11 +59,9 @@ class Notebook(Hand):
         x, y, r = CARD_X + 30, self.row_cy[i], 24
         return dk.wobble_path([(x - r, y - r), (x + r, y - r), (x + r, y + r), (x - r, y + r), (x - r, y - r + 3)], seed, 0.7, 8)
 
-    # ---------- ひっかけ＝ふせん ----------
-    def make_trap(self):
-        super().make_trap()
+    # ---------- ひっかけ・締めの帯＝ふせん ----------
+    def make_note(self, w, h):
         c = self.c
-        w, h = CARD_W - 8, self.trap_h
         pad = 26
         img = Image.new("RGBA", (int((w + pad * 2) * dk.R), int((h + pad * 2) * dk.R)), (0, 0, 0, 0))
         img.alpha_composite(shadow(w, h, 4, 10, 70), dest=(int((pad - 20) * dk.R), int((pad - 16) * dk.R)))
@@ -70,28 +69,49 @@ class Notebook(Hand):
         dn = ImageDraw.Draw(note)
         dn.rectangle([0, 0, note.width, int(10 * dk.R)], fill=tuple(int(v * 0.93) for v in c["ふせん"][:3]) + (255,))
         img.alpha_composite(note, dest=(int(pad * dk.R), int(pad * dk.R)))
-        self.note = img.rotate(-1.2, resample=Image.BICUBIC, expand=False)
-        self.note_pad = pad
+        return img.rotate(-1.2, resample=Image.BICUBIC, expand=False)
+
+    def make_trap(self):
+        super().make_trap()
+        self.note = self.make_note(CARD_W - 8, self.trap_h)
+
+    def make_cta(self):
+        super().make_cta()
+        self.cta_note = self.make_note(CARD_W - 8, self.cta_h + 16) if self.T.cta else None
 
     def trap(self, cv, t):
-        if t < TRAP:
+        T = self.T
+        if t < T.trap:
             return
-        p = ease_out(prog(t, TRAP - 0.1, TRAP + 0.2))
+        p = ease_out(prog(t, T.trap - 0.1, T.trap + 0.2))
         x, y = CARD_X + 4, self.trap_y + 2
         paste(cv, self.note, x + (CARD_W - 8) / 2, y + self.trap_h / 2, alpha=min(1, p * 2), scale=1.1 - 0.1 * p, anchor="cc")
         if p >= 1:
             super().trap(cv, t)
 
+    def cta(self, cv, t):
+        """締めの帯は、新しいふせんに書く"""
+        T = self.T
+        p = ease_out(prog(t, T.cta0 - 0.05, T.cta0 + 0.2))
+        x, y = CARD_X + 4, self.trap_y + 2
+        h = self.cta_h + 16
+        paste(cv, self.cta_note, x + (CARD_W - 8) / 2, y + h / 2, alpha=min(1, p * 2), scale=1.1 - 0.1 * p, anchor="cc")
+        if p >= 1:
+            super().cta(cv, t)
+
+    # ---------- 最後：問題だけのページへ ----------
     def transition(self, t):
-        """新しいページが右からめくれて入ってくる"""
-        p = ease_in_out(prog(t, TR0, TR1))
+        """新しいページ（問題だけ。1こま目と同じ）が右からめくれて入ってくる"""
+        T = self.T
+        p = ease_in_out(prog(t, T.tr0, T.tr1))
         cv = self.bg.copy()
         self.scene(cv, t)
         X = int(dk.W * (1 - p))
         if X < dk.W:
             if X > int(40 * dk.R):
                 cv.alpha_composite(self.page_shadow(), dest=(X - int(40 * dk.R), 0))
-            cv.alpha_composite(self.bg_end.crop((0, 0, dk.W - X, dk.H)), dest=(X, 0))
+            page = self.hook_state(t - T.dur)
+            cv.alpha_composite(page.crop((0, 0, dk.W - X, dk.H)), dest=(X, 0))
         return cv
 
     def page_shadow(self):
@@ -104,7 +124,10 @@ class Notebook(Hand):
         return cached(("pgsh",), make)
 
     def sounds(self):
+        T = self.T
         ev = [e for e in super().sounds()]
-        ev.append(("flip", TR0 + 0.05, 0.45, TR1 - TR0))
-        ev.append(("stick", TRAP - 0.05, 0.4, 0))
+        ev.append(("flip", T.tr0 + 0.05, 0.45, T.tr1 - T.tr0))
+        ev.append(("stick", T.trap - 0.05, 0.4, 0))
+        if T.cta:
+            ev.append(("stick", T.cta0 - 0.05, 0.4, 0))
         return ev
