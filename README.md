@@ -25,4 +25,4 @@
 
 `fonts/` の Noto Sans CJK JP は、動画に必要な文字だけに減らした版です（SIL Open Font License 1.1。`fonts/OFL.txt`）。
 
-声を使うときは、Open JTalk（名古屋工業大学・修正BSDライセンス）と、声のデータ HTS Voice "NITECH-JP-ATR503-M001"（名古屋工業大学・CC BY 3.0）を使います。CC BY 3.0 の決まりにより、ひっかけの説明のあいだ、画面の下にクレジットを小さく出します（VOICEVOX のときも同じ。説明欄にも書く）。
+声は VOICEVOX（ずんだもん）を使います（Actions で VOICEVOX ENGINE を立てる）。ずんだもんの規約により、ひっかけの説明のあいだ画面の下にクレジット「VOICEVOX:ずんだもん」を出し、説明欄にも書きます。VOICEVOX が立たないときは声なしで作り、status.json の「声」に出ます。
