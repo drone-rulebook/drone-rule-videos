@@ -40,8 +40,9 @@ jobs:
           shopt -s nullglob
           for f in long/*.json; do
             id=$(basename "$f" .json)
-            # 台本が動画より新しいときだけ作る（作り直したいときは long_videos/<id>.mp4 を消す）
-            if [ -f "long_videos/$id.mp4" ] && [ "$(git log -1 --format=%ct -- "$f")" -le "$(git log -1 --format=%ct -- "long_videos/$id.mp4")" ]; then
+            # 台本か long.py が動画より新しいときだけ作る（作り直したいときは long_videos/<id>.mp4 を消す）
+            src=$(git log -1 --format=%ct -- "$f" long.py)
+            if [ -f "long_videos/$id.mp4" ] && [ "$src" -le "$(git log -1 --format=%ct -- "long_videos/$id.mp4")" ]; then
               echo "作成済み：$id"; continue
             fi
             python long.py "$f" "long_videos/$id.mp4"
