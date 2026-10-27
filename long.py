@@ -286,14 +286,28 @@ def scene_explain(ep, i, shown_points, text):
     return fr
 
 
+def clip_line(text, f, max_w):
+    """1行に入らなければ末尾を「…」にして切る"""
+    if f.getlength(text) <= max_w:
+        return text
+    while text and f.getlength(text + "…") > max_w:
+        text = text[:-1]
+    return text + "…"
+
+
 def scene_talk(ep, heading, text, extra=None):
     fr = Frame(ep)
     fr.d.text((120, 150), heading, font=font("Black", 64), fill=C["accent"])
-    y = 260
-    for line in (extra or []):
-        f, ls = fit_text(line, "Bold", W - 300, 1, 42, 26)
-        fr.d.text((150, y), "・" + "".join(c for c, _ in ls[0]), font=f, fill=C["text"])
-        y += int(f.size * 1.5)
+    items = extra or []
+    cols = 1 if len(items) <= 6 else 2            # 字幕の上（y=820まで）に必ず収める
+    rows = -(-len(items) // cols) if items else 0
+    col_w = (W - 300) // cols - (40 if cols == 2 else 0)
+    f = font("Bold", 42 if cols == 1 else 38)
+    lh = int(f.size * 1.55)
+    for k, line in enumerate(items):
+        x = 150 + (k // rows) * ((W - 300) // cols)
+        y = 270 + (k % rows) * lh
+        fr.d.text((x, y), clip_line("・" + line, f, col_w), font=f, fill=C["text"])
     subtitle(fr, text)
     return fr
 
@@ -380,8 +394,7 @@ class Builder:
         self.hold(scene_title(ep), 2.5)
         for s in ep["intro"]:
             self.speak(lambda tx: scene_talk(ep, ep.get("theme", ""), tx,
-                                             [f"Q{k + 1}  {q['q'].replace('*', '')[:30]}…" if len(q['q']) > 30 else f"Q{k + 1}  {q['q'].replace('*', '')}"
-                                              for k, q in enumerate(ep["questions"])]), s)
+                                             [f"Q{k + 1}  {q['q'].replace('*', '')}" for k, q in enumerate(ep["questions"])]), s)
         for i, q in enumerate(ep["questions"]):
             self.chapters.append((self.t, f"Q{i + 1} " + (q.get("chapter") or q["q"].replace("*", "")[:22])))
             self.sfx.append((self.t, "swoosh"))
