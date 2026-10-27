@@ -37,6 +37,7 @@ jobs:
       - name: まだ作っていない台本を動画にする
         run: |
           mkdir -p long_videos
+          shopt -s nullglob
           for f in long/*.json; do
             id=$(basename "$f" .json)
             # 台本が動画より新しいときだけ作る（作り直したいときは long_videos/<id>.mp4 を消す）
