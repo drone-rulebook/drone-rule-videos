@@ -387,10 +387,11 @@ class Builder:
             self.sfx.append((self.t, "swoosh"))
             two = len(q["choices"]) == 2
             lead = "これ違反？" if two else f"第{i + 1}問"
-            self.speak(lambda tx: scene_question(ep, i, "ask", tx), lead + ("" if lead.endswith("？") else "。") + q["q"])
+            ask = scene_question(ep, i, "ask", None)        # 問題と選択肢は画面に出ているので、字幕は出さない
+            self.speak(lambda tx: ask, lead + ("" if lead.endswith("？") else "。") + q["q"])
             if not two:
                 for k, c in enumerate(q["choices"]):
-                    self.speak(lambda tx: scene_question(ep, i, "ask", tx), f"{'ABC'[k]}、{c}。", tail=0.15)
+                    self.speak(lambda tx: ask, f"{'ABC'[k]}、{c}。", tail=0.15)
             for c in range(THINK, 0, -1):
                 self.sfx.append((self.t, "tick"))
                 self.hold(scene_question(ep, i, "think", None, c), 1.0)
