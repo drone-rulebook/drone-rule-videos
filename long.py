@@ -176,7 +176,7 @@ class Frame:
             self.d.rectangle([0, 96, int(W * qno / n), 102], fill=C["accent"])
         # 下の帯（クレジット）
         cf = font("Medium", 22)
-        cr = "音声：VOICEVOX:ずんだもん　｜　教則第5版にもとづく非公式の解説"
+        cr = "音声：VOICEVOX:ずんだもん　｜　教則第5版対応"
         self.d.text((W - 40 - cf.getlength(cr), H - 40), cr, font=cf, fill=C["sub"])
 
     def save(self, path):
@@ -221,7 +221,7 @@ def scene_title(ep):
     t2 = f"ひっかけ{len(ep['questions'])}問"
     fr.d.text(((W - tf.getlength(t2)) / 2, y + 10), t2, font=tf, fill=C["accent"])
     y += 120
-    sub = "ずんだもんが解説　｜　教則第5版対応"
+    sub = "二等学科　｜　教則第5版対応"
     sf = font("Bold", 46)
     fr.d.text(((W - sf.getlength(sub)) / 2, y + 40), sub, font=sf, fill=C["accent"])
     return fr
@@ -319,12 +319,12 @@ def thumbnail(ep, path):
     d.polygon([(0, 520), (1280, 380), (1280, 720), (0, 720)], fill=(255, 196, 0, 255))
     drone_icon(d, 1100, 160, 60, C["accent"])
     d.text((60, 50), "ドローン国家資格 二等学科", font=font("Black", 54), fill=C["accent"])
-    f, ls = fit_text(ep.get("thumb", ep.get("theme", "")), "Black", 1150, 2, 120, 70)
+    f, ls = fit_text(ep.get("thumb", ep.get("theme", "")), "Black", 900, 2, 120, 70)   # 右上のドローンに重ねない
     draw_lines(d, ls, f, 60, 150, (255, 255, 255), C["accent"], lh=1.15)
     tf = font("Black", 92)
     d.text((60, 560), f"ひっかけ{len(ep['questions'])}問", font=tf, fill=(14, 22, 40))
     sf = font("Black", 46)
-    d.text((760, 610), "ずんだもんが解説", font=sf, fill=(14, 22, 40))
+    d.text((760, 610), "教則第5版対応", font=sf, fill=(14, 22, 40))
     img.save(path)
 
 
@@ -517,7 +517,7 @@ def stamp(t):
 
 
 def description(ep, b, note_url="", site_url=""):
-    lines = [ep["title"], "", ep.get("lead", "ドローン国家資格（二等無人航空機操縦士）学科のひっかけ問題を、ずんだもんが解説します。内容は国土交通省『無人航空機の飛行の安全に関する教則』（第5版）にもとづく非公式の解説です。最新の規則は国土交通省の発表で確かめてください。"), ""]
+    lines = [ep["title"], "", ep.get("lead", "ドローン国家資格（二等無人航空機操縦士）学科のひっかけ問題を、1問ずつ解説します。内容は国土交通省『無人航空機の飛行の安全に関する教則』（第5版）に対応しています。最新の規則は国土交通省の発表で確かめてください。"), ""]
     lines += ["▼目次"] + [f"{stamp(t)} {name}" for t, name in b.chapters] + [""]
     if note_url:
         lines += ["▼くわしい解説つきの問題集（note）", note_url, ""]
