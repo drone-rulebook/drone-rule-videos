@@ -427,28 +427,42 @@ class Builder:
 
 
 def bgm_bed(dur, seed=5):
-    """控えめなBGM（Fmaj7→G→Em7→Am7 をくり返す。ピアノとパッドとベース）"""
+    """BGM（Fmaj7→G→Em7→Am7 をくり返す。パッド・ピアノ・ベースに、マリンバの分散和音と軽いリズム）"""
     bpm = 84
-    bar = 4 * 60 / bpm
-    n = int(dur * SR) + SR
+    beat = 60 / bpm
+    bar = 4 * beat
+    n = int(dur * SR) + 2 * SR
     L, R = np.zeros(n), np.zeros(n)
+    rng = np.random.default_rng(seed)
     chords = [music.CHORDS[c] for c in music.PROG_A]
+    kick, hat_c, hat_o = music.kick(SR, rng, 0.55), music.hat(SR, rng, 0.16), music.hat(SR, rng, 0.10, open_=True)
+    arp_order = [0, 1, 2, 3, 2, 1, 0, 2]
+
+    def put(sig, t0, gl=1.0, gr=1.0):
+        i = int(t0 * SR)
+        sl, sr_ = (sig[:, 0], sig[:, 1]) if sig.ndim == 2 else (sig, sig)
+        m = min(len(sl), n - i)
+        if m > 0:
+            L[i:i + m] += sl[:m] * gl
+            R[i:i + m] += sr_[:m] * gr
+
     t, k = 0.0, 0
     while t < dur + bar:
         ch = chords[k % len(chords)]
-        pad = music.pad_chord(ch["ep"], bar * 1.05, SR, bright=0.25) * 0.5
-        ep = music.ep_chord(ch["ep"], bar * 0.9, SR, vel=0.45) * 0.35
-        bass = music.bass_note(music.hz(ch["bass"]), bar * 0.95, SR, vel=0.6) * 0.4
-        i = int(t * SR)
-        for sig, gl, gr in ((pad, 1.0, 1.0), (ep, 1.0, 1.0), (bass, 1.0, 1.0)):
-            if sig.ndim == 2:
-                sl, sr_ = sig[:, 0], sig[:, 1]
-            else:
-                sl = sr_ = sig
-            m = min(len(sl), n - i)
-            if m > 0:
-                L[i:i + m] += sl[:m] * gl
-                R[i:i + m] += sr_[:m] * gr
+        put(music.pad_chord(ch["ep"], bar * 1.05, SR, bright=0.3) * 0.45, t)
+        put(music.ep_chord(ch["ep"], bar * 0.9, SR, vel=0.45) * 0.30, t)
+        put(music.bass_note(music.hz(ch["bass"]), beat * 1.8, SR, vel=0.6) * 0.40, t)
+        put(music.bass_note(music.hz(ch["bass"]), beat * 1.8, SR, vel=0.5) * 0.32, t + 2 * beat)
+        for j, idx in enumerate(arp_order):                 # 8分音符のマリンバ（左右に少し振る）
+            f = music.hz(ch["arp"][idx])
+            pan = 0.35 if j % 2 else -0.35
+            put(music.marimba(f, SR, vel=0.5 if j % 4 == 0 else 0.36) * 0.22, t + j * beat / 2, 1 - pan * 0.5, 1 + pan * 0.5)
+        if k % 8 != 7:                                      # 8小節目はリズムを抜いて息つぎ
+            for q in range(4):
+                if q in (0, 2):
+                    put(kick * 0.55, t + q * beat)
+                put(hat_c * (0.9 if q % 2 else 0.6), t + q * beat + beat / 2)
+            put(hat_o * 0.7, t + 3.5 * beat)
         t += bar
         k += 1
     return L[:int(dur * SR)], R[:int(dur * SR)]
@@ -479,8 +493,8 @@ def mix_audio(b, dur, path):
         print("BGM なし：", e)
         ml = mr = np.zeros(n)
     if np.abs(ml).max() > 0:
-        duck = audio.duck_env(vo, 0.65, rel=0.3, thresh=0.25) if np.abs(vo).max() > 0 else 1.0
-        g = 10 ** ((-28.0 - music.loudness(ml, mr, SR)) / 20)
+        duck = audio.duck_env(vo, 0.5, rel=0.4, thresh=0.25) if np.abs(vo).max() > 0 else 1.0
+        g = 10 ** ((-23.0 - music.loudness(ml, mr, SR)) / 20)   # 声の下でも聞こえるくらい
         ml, mr = ml * g * duck, mr * g * duck
     left, right = vo + fx * 0.5 + ml, vo + fx * 0.5 + mr
     g = 10 ** ((-15.0 - music.loudness(left, right, SR)) / 20)
