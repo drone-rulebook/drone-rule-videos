@@ -1,0 +1,15 @@
+{
+ "format": "drone-long/v1",
+ "videos": [
+  {
+   "id": "L001",
+   "title": "【ドローン国家資格】飛行禁止空域のひっかけ10問【二等学科・教則第5版対応】",
+   "mp4": "long_videos/L001.mp4",
+   "desc": "long_videos/L001_desc.txt",
+   "thumb": "long_videos/L001_thumb.png",
+   "bytes": 24668583,
+   "seconds": 647.1,
+   "voice": "オン"
+  }
+ ]
+}
