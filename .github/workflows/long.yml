@@ -1,0 +1,87 @@
+name: 長尺の解説動画をつくる
+
+on:
+  push:
+    branches: [main, long-ep1]
+    paths:
+      - "long/*.json"
+      - "long.py"
+      - ".github/workflows/long.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: long
+  cancel-in-progress: false
+
+jobs:
+  long:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 台本と動画の更新時刻をくらべるため
+      - name: 道具を入れる（ffmpeg・日本語の全部の字があるフォント）
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-noto-cjk
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q pillow numpy imageio-ffmpeg
+      - name: VOICEVOX を立てる
+        run: |
+          docker run -d --rm --name voicevox -p 127.0.0.1:50021:50021 voicevox/voicevox_engine:cpu-latest
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:50021/version && break; sleep 3; done
+      - name: まだ作っていない台本を動画にする
+        run: |
+          mkdir -p long_videos
+          shopt -s nullglob
+          for f in long/*.json; do
+            id=$(basename "$f" .json)
+            # 台本が動画より新しいときだけ作る。long.py を直しても、出した回は作り直さない
+            # （まだ出していない回を新しい見た目にしたいときは、その回の台本を触るか long_videos/<id>.mp4 を消す）
+            src=$(git log -1 --format=%ct -- "$f")
+            if [ -f "long_videos/$id.mp4" ] && [ "$src" -le "$(git log -1 --format=%ct -- "long_videos/$id.mp4")" ]; then
+              echo "作成済み：$id"; continue
+            fi
+            python long.py "$f" "long_videos/$id.mp4"
+            size=$(stat -c %s "long_videos/$id.mp4")
+            echo "$id: $size bytes"
+            if [ "$size" -gt 47000000 ]; then echo "::warning::$id の動画が47MBを超えました（スクリプトで取れない大きさ）"; fi
+          done
+      - name: 目録を作る（スプレッドシートのスクリプトが、まだ出していない回をここから選ぶ）
+        run: |
+          python - <<'PY'
+          import json, os, glob
+          out = []
+          for mp4 in sorted(glob.glob("long_videos/L*.mp4")):
+              vid = os.path.basename(mp4)[:-4]
+              desc = f"long_videos/{vid}_desc.txt"
+              if not os.path.exists(desc):
+                  continue
+              info = {}
+              try:
+                  info = json.load(open(f"long_videos/{vid}_info.json", encoding="utf-8"))
+              except Exception:
+                  pass
+              out.append({"id": vid, "title": open(desc, encoding="utf-8").readline().strip(),
+                          "mp4": mp4, "desc": desc, "thumb": f"long_videos/{vid}_thumb.png",
+                          "bytes": os.path.getsize(mp4), "seconds": info.get("長さ（秒）"), "voice": info.get("声")})
+          json.dump({"format": "drone-long/v1", "videos": out}, open("long_videos/index.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+          print("目録：", [v["id"] for v in out])
+          PY
+      - name: できた動画を置く
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add long_videos
+          git commit -q -m "長尺の解説動画を作成 $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M')" || { echo "変更なし"; exit 0; }
+          for i in 1 2 3; do
+            if git pull -q --rebase && git push -q; then exit 0; fi
+            git rebase --abort 2>/dev/null || true
+            sleep 10
+          done

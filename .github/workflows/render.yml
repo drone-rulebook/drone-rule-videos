@@ -13,6 +13,10 @@ on:
       - "docs/**"
       - "samples/**"
       - "tests/**"
+      - "long/**"
+      - "long_videos/**"
+      - "long.py"
+      - ".github/workflows/long.yml"
   workflow_dispatch:         # 手で動かすとき（Actions の画面の「Run workflow」）
 
 permissions:
