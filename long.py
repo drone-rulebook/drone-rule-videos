@@ -561,7 +561,7 @@ def main(argv):
     base = os.path.splitext(out)[0]
     thumbnail(ep, base + "_thumb.png")
     th = json.load(open(os.path.join(HERE, "themes", "drone.json"), encoding="utf-8"))
-    note = ep.get("note_url", "https://note.com/drone_second/n/n4f61cd374d8f")
+    note = ""   # ずんだもんの声の規約（情報商材の宣伝に使わない）のため、長尺では note を案内しない。無料のサイトだけ
     site = ep.get("site_url", "https://drone-rulebook.github.io/drone-rule-videos/")
     with open(base + "_desc.txt", "w", encoding="utf-8") as f:
         f.write(description(ep, b, note, site))

@@ -42,8 +42,9 @@ jobs:
           shopt -s nullglob
           for f in long/*.json; do
             id=$(basename "$f" .json)
-            # 台本か long.py が動画より新しいときだけ作る（作り直したいときは long_videos/<id>.mp4 を消す）
-            src=$(git log -1 --format=%ct -- "$f" long.py)
+            # 台本が動画より新しいときだけ作る。long.py を直しても、出した回は作り直さない
+            # （まだ出していない回を新しい見た目にしたいときは、その回の台本を触るか long_videos/<id>.mp4 を消す）
+            src=$(git log -1 --format=%ct -- "$f")
             if [ -f "long_videos/$id.mp4" ] && [ "$src" -le "$(git log -1 --format=%ct -- "long_videos/$id.mp4")" ]; then
               echo "作成済み：$id"; continue
             fi
@@ -52,6 +53,27 @@ jobs:
             echo "$id: $size bytes"
             if [ "$size" -gt 47000000 ]; then echo "::warning::$id の動画が47MBを超えました（スクリプトで取れない大きさ）"; fi
           done
+      - name: 目録を作る（スプレッドシートのスクリプトが、まだ出していない回をここから選ぶ）
+        run: |
+          python - <<'PY'
+          import json, os, glob
+          out = []
+          for mp4 in sorted(glob.glob("long_videos/L*.mp4")):
+              vid = os.path.basename(mp4)[:-4]
+              desc = f"long_videos/{vid}_desc.txt"
+              if not os.path.exists(desc):
+                  continue
+              info = {}
+              try:
+                  info = json.load(open(f"long_videos/{vid}_info.json", encoding="utf-8"))
+              except Exception:
+                  pass
+              out.append({"id": vid, "title": open(desc, encoding="utf-8").readline().strip(),
+                          "mp4": mp4, "desc": desc, "thumb": f"long_videos/{vid}_thumb.png",
+                          "bytes": os.path.getsize(mp4), "seconds": info.get("長さ（秒）"), "voice": info.get("声")})
+          json.dump({"format": "drone-long/v1", "videos": out}, open("long_videos/index.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+          print("目録：", [v["id"] for v in out])
+          PY
       - name: できた動画を置く
         run: |
           git config user.name "github-actions[bot]"
