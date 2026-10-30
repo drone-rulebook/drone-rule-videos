@@ -14,7 +14,7 @@
 見た目の版5：1こま目から問題の全文、カウントダウン3.4秒から、締めの画面はなく最後に1こま目と同じ絵へ戻る（くり返し再生がつながる）。
 締めの声（themes の「締めの声を使う」）を入れる動画は、戻る前に「毎日1問」の帯と声が2.0秒入る。
 """
-import csv, datetime, io, json, os, re, shutil, subprocess, sys, unicodedata, urllib.request, zlib
+import csv, datetime, hashlib, io, json, os, re, shutil, subprocess, sys, unicodedata, urllib.request, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import drawkit as dk
 import audio
@@ -82,9 +82,29 @@ def ffmpeg_bin():
 
 def read_tag(path):
     """動画に書きこんだ「見た目の版」を読む（無ければ ""）"""
+    return read_meta(path)[0]
+
+
+def read_meta(path):
+    """動画に書きこんだ「見た目の版」と「台本の中身の印」を読む（無ければ ""）"""
     r = subprocess.run([ffmpeg_bin(), "-hide_banner", "-i", path], capture_output=True, text=True, errors="replace")
     m = re.search(r"comment\s*:\s*look=([^\s;]+)", r.stderr)
-    return m.group(1) if m else ""
+    s = re.search(r"comment\s*:\s*look=[^\n]*?;sum=([0-9a-f]+)", r.stderr)
+    return (m.group(1) if m else "", s.group(1) if s else "")
+
+
+def script_sum(sc):
+    """台本の中身（問題・選択肢・正解・ひっかけ）の印。公開前の台本が書きかわったら作り直すのに使う"""
+    keys = ("q1", "q2", "a", "b", "c", "answer", "trap")
+    raw = json.dumps([str(sc.get(k, "")) for k in keys], ensure_ascii=False)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
+
+
+def needs_redo(old_tag, old_sum, tag, sc):
+    """もう作った動画を作り直すか：見た目の版が変わった、または台本の中身が変わった（印のある動画だけ比べる）"""
+    if old_tag != tag:
+        return True
+    return bool(sc is not None and old_sum and old_sum != script_sum(sc))
 
 
 def make_look(sc, theme, style, vid=None):
@@ -138,7 +158,7 @@ def render(sc, out_path, theme, style, info=None, vid=None):
     part = out_path + ".part.mp4"
     try:
         audio.build(look, tmp_wav, dur, times, bgm=theme.get("BGM", True), voices=voices)
-        tag = f"look={look_tag(theme)};style={style}"
+        tag = f"look={look_tag(theme)};style={style};sum={script_sum(sc)}"
         cmd = [ffmpeg_bin(), "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{dk.W}x{dk.H}", "-r", str(FPS), "-i", "-",
                "-i", tmp_wav, "-c:v", "libx264", "-preset", "slow", "-crf", "23", "-tune", "animation", "-pix_fmt", "yuv420p",
                "-c:a", "aac", "-b:a", "128k", "-metadata", "comment=" + tag, "-movflags", "+faststart", "-shortest", part]
@@ -291,12 +311,12 @@ def _main(st):
             continue
         out = os.path.join(vdir, vid + ".mp4")
         redo = False
+        sc, why = script_of(r)
         if os.path.exists(out):
-            # 見た目の版が変わっていて、まだ公開していない（公開予定日が今日以降）なら作り直す
-            if d < today or read_tag(out) == tag:
+            # まだ公開していない（公開予定日が今日以降）動画は、見た目の版か台本の中身が変わっていたら作り直す
+            if d < today or not needs_redo(*read_meta(out), tag, sc):
                 continue
             redo = True
-        sc, why = script_of(r)
         if sc is None:
             print("見送り：", vid, why)
             st["見送った台本"].append(vid if why == "台本が足りない" else vid + "（" + why + "）")
