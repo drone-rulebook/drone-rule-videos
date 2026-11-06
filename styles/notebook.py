@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """型3「ノート」：罫線ノートに青いボールペンで書く。強調は黄色のマーカー、正解は赤ペンの丸、ひっかけはふせん。
-最後はページをめくって、問題だけのページ（1こま目と同じ）に戻る。"""
+最後はページをめくって、1こま目と同じページに戻る。
+版6：1こま目は掴みのページ（青いペンの場面の1行・マーカーを引いた赤い札・呼びかけ）。1.2秒でページをめくって問題のページへ。"""
 import numpy as np
 from PIL import Image, ImageDraw
 import drawkit as dk
-from drawkit import paste, prog, ease_out, ease_in_out, with_alpha, cached, shadow
+from drawkit import CX, paste, prog, ease_out, ease_in_out, with_alpha, cached, shadow
 from .hand import Hand
-from .base import Q_X, CARD_X, CARD_W
+from .base import Q_X, CARD_X, CARD_W, HOOK_TR
 
 
 class Notebook(Hand):
@@ -44,11 +45,12 @@ class Notebook(Hand):
         pass
 
     def emphasis_under(self, cv, t):
-        """強調の文字の下に、黄色のマーカーを引く（1こま目のすぐあと）"""
+        """強調の文字の下に、黄色のマーカーを引く（問題のページになったすぐあと）"""
         mk = self.c["マーカー"]
         lh = self.qb.line_h
+        s = self.T.start
         for k, (i, x0, x1) in enumerate(self.qb.spans):
-            f = ease_out(prog(t, 0.15 + 0.1 * k, 0.4 + 0.1 * k))
+            f = ease_out(prog(t, s + 0.15 + 0.1 * k, s + 0.4 + 0.1 * k))
             if f <= 0:
                 continue
             w = (x1 - x0 + 8) * f
@@ -99,19 +101,32 @@ class Notebook(Hand):
         if p >= 1:
             super().cta(cv, t)
 
-    # ---------- 最後：問題だけのページへ ----------
-    def transition(self, t):
-        """新しいページ（問題だけ。1こま目と同じ）が右からめくれて入ってくる"""
-        T = self.T
-        p = ease_in_out(prog(t, T.tr0, T.tr1))
-        cv = self.bg.copy()
-        self.scene(cv, t)
+    # ---------- 版6の掴み：札の下に黄色のマーカー ----------
+    def hook_colors(self):
+        # 札の文字＝赤ペン・札の強調＝インク・（囲みの線は使わずマーカー）・呼びかけ＝インク・A/B/C＝赤ペン
+        return self.em, self.ink, self.em, self.ink, self.em
+
+    def tag_mark(self, cv):
+        if self.hk_tb is None:
+            return
+        _, h = self.tag_box()
+        mk = self.c["マーカー"]
+        tb = self.hk_tb
+        y0 = self.hk_tag_y + (h - tb.h) / 2
+        for i, lw in enumerate(tb.widths):         # 札の行ごとに、文字の下半分へ太いマーカー
+            y = y0 + i * tb.line_h + tb.line_h * 0.42
+            paste(cv, dk.rrect(lw + 24, tb.line_h * 0.5, 6, with_alpha(mk, 200)), CX - lw / 2 - 12 - 4, y - 4)
+
+    # ---------- ページめくり（最後と、版6の掴み → 問題のページ） ----------
+    def swap(self, t, t0, t1, old, new):
+        """新しいページ（new）が右からめくれて入ってきて、old のページにかぶさる"""
+        p = ease_in_out(prog(t, t0, t1))
+        cv = old
         X = int(dk.W * (1 - p))
         if X < dk.W:
             if X > int(40 * dk.R):
                 cv.alpha_composite(self.page_shadow(), dest=(X - int(40 * dk.R), 0))
-            page = self.hook_state(t - T.dur)
-            cv.alpha_composite(page.crop((0, 0, dk.W - X, dk.H)), dest=(X, 0))
+            cv.alpha_composite(new.crop((0, 0, dk.W - X, dk.H)), dest=(X, 0))
         return cv
 
     def page_shadow(self):
@@ -127,6 +142,8 @@ class Notebook(Hand):
         T = self.T
         ev = [e for e in super().sounds()]
         ev.append(("flip", T.tr0 + 0.05, 0.45, T.tr1 - T.tr0))
+        if T.hook:
+            ev.append(("flip", T.hook0, 0.4, HOOK_TR + 0.05))      # 掴み → 問題のページ
         ev.append(("stick", T.trap - 0.05, 0.4, 0))
         if T.cta:
             ev.append(("stick", T.cta0 - 0.05, 0.4, 0))

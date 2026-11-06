@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-"""型2「黒板」：深緑の黒板に、チョークで書いていく。最後に黒板消しが横切って、問題だけの黒板（1こま目と同じ）に戻る。"""
+"""型2「黒板」：深緑の黒板に、チョークで書いていく。最後に黒板消しが横切って、1こま目と同じ黒板に戻る。
+版6：1こま目は掴み（白いチョークの場面の1行・ピンクで囲んだ黄色の札・水色の呼びかけ）。1.2秒で黒板消しが横切って問題の黒板へ。"""
 import math
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 import drawkit as dk
 from drawkit import paste, prog, ease_in_out, aa_shape, cached
 from .hand import Hand
-from .base import CONTENT_BOTTOM
+from .base import CONTENT_BOTTOM, HOOK_TR
 
 
 class Chalk(Hand):
@@ -59,24 +60,31 @@ class Chalk(Hand):
             return aa_shape(96, 230, fn)
         return cached(("eraser",), make)
 
-    def transition(self, t):
-        """黒板消しが左から右へ横切って、答えとひっかけを消し、問題だけの黒板に戻す"""
-        T = self.T
-        p = ease_in_out(prog(t, T.tr0, T.tr1))
+    def swap(self, t, t0, t1, old, new):
+        """黒板消しが左から右へ横切って、old（今の黒板）を消し、通ったあとを new の黒板にする。
+        最後の場面転換（答えとひっかけ → 1こま目と同じ黒板）と、版6の掴み → 問題の黒板の両方に使う。"""
+        p = ease_in_out(prog(t, t0, t1))
         ex = -120 + 960 * p
-        cv = self.bg.copy()
-        self.scene(cv, t)
+        cv = old
         X = int(ex * dk.R)
         if X > 0:
-            clean = self.hook_state(t - T.dur)
-            cv.alpha_composite(clean.crop((0, 0, min(dk.W, X), dk.H)), dest=(0, 0))
+            cv.alpha_composite(new.crop((0, 0, min(dk.W, X), dk.H)), dest=(0, 0))
         top, bot = self.card_y[0], CONTENT_BOTTOM
+        if t0 < self.T.start:                           # 版6の掴みを消すとき：掴みの文字の高さを上下に
+            top, bot = self.hk_scene_y, self.hk_bottom
         mid, amp = (top + bot) / 2, max(40, (bot - top) / 2 - 60)
-        bob = amp * math.sin((t - T.tr0) * 2 * math.pi * 2.2)
+        bob = amp * math.sin((t - t0) * 2 * math.pi * 2.2 * 0.5 / max(0.1, t1 - t0))
         paste(cv, self.eraser(), ex - 70, mid + bob, anchor="cc", angle=8)
         return cv
 
+    def hook_colors(self):
+        # 札の文字＝黄色・札の強調＝白・札の囲み＝ピンク・呼びかけ＝水色・A/B/C＝黄色
+        return self.em, self.ink, self.ng, self.sub, self.em
+
     def sounds(self):
+        T = self.T
         ev = super().sounds()
-        ev.append(("eraser", self.T.tr0, 0.4, self.T.tr1 - self.T.tr0))
+        ev.append(("eraser", T.tr0, 0.4, T.tr1 - T.tr0))
+        if T.hook:
+            ev.append(("eraser", T.hook0, 0.32, HOOK_TR))
         return ev

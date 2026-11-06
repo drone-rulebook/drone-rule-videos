@@ -12,6 +12,8 @@
 台本の文字は、*で囲んだところを強調する（例：150mは*どこから*測る？）。選択肢C が空の台本は2択（これ違反？など）。
 見た目の型（styles/）は3つ。台本IDで日替わりに選ぶ（themes/*.json の「型の選び方」）。
 見た目の版5：1こま目から問題の全文、カウントダウン3.4秒から、締めの画面はなく最後に1こま目と同じ絵へ戻る（くり返し再生がつながる）。
+見た目の版6（themes の「見た目の版」が6以上）：1こま目は掴み（画面の真ん中に大きな場面の1行・問いの札・「AかBで答えてね」）。
+  1.2秒で問題の画面へ移り、そこから先は版5の流れを1.5秒ずらしたもの。最後は掴みの画面へ戻る。2択の場面は台本の「タイトル」から取る。
 締めの声（themes の「締めの声を使う」）を入れる動画は、戻る前に「毎日1問」の帯と声が2.0秒入る。
 """
 import csv, datetime, hashlib, io, json, os, re, shutil, subprocess, sys, unicodedata, urllib.request, zlib
@@ -94,9 +96,13 @@ def read_meta(path):
 
 
 def script_sum(sc):
-    """台本の中身（問題・選択肢・正解・ひっかけ）の印。公開前の台本が書きかわったら作り直すのに使う"""
+    """台本の中身（問題・選択肢・正解・ひっかけ）の印。公開前の台本が書きかわったら作り直すのに使う。
+    2択は、版6の掴みに出すタイトルの場面の部分も入れる（「｜」から後ろの書きかえや、3択のタイトルでは作り直さない）"""
     keys = ("q1", "q2", "a", "b", "c", "answer", "trap")
-    raw = json.dumps([str(sc.get(k, "")) for k in keys], ensure_ascii=False)
+    vals = [str(sc.get(k, "")) for k in keys]
+    if not str(sc.get("c", "")).strip() and B.title_scene(sc.get("title", "")):
+        vals.append(B.title_scene(sc.get("title", "")))
+    raw = json.dumps(vals, ensure_ascii=False)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
 
 
@@ -119,12 +125,15 @@ def plan_voice(look, sc, theme, vcfg):
     tbl = vcfg.get("読み替え", {})
     speed = float(vcfg.get("速さ", 1.15))
     texts = voice.question_texts(sc, tbl)
-    q0 = look.T.times()["q"][0]
-    latest = B.COUNT0 + look.q_extra_max() - 0.1          # 問題の声が終わってよい、いちばん遅い時刻
+    q0 = look.T.times()["q"][0]                           # 版6も 0.15秒（掴みの画面のあいだに読み始める）
+    base = look.T.count0_base                             # ずれなしのカウントダウンの始まり（版6は掴みの分だけ遅い）
+    # 問題の声が終わってよい、いちばん遅い時刻。版6でも版5と同じ時刻（ただし、ずらさずに読み切れる長さまでは延ばす）。
+    # 掴みの分だけ長い文を読ませると、版5より1.5秒を超えて長くなる動画が出るため。
+    latest = max(B.COUNT0 + look.q_extra_max() - 0.1, base - 0.1 - 0.12)
     qx, used = voice.say(texts, latest - q0, speed, audio.SR)
     out, skipped = [], []
     if qx is not None:
-        extra = max(0.0, q0 + len(qx) / audio.SR + 0.12 - (B.COUNT0 - 0.1))
+        extra = max(0.0, q0 + len(qx) / audio.SR + 0.12 - (base - 0.1))
         if look.n == 2 and used != texts[0]:
             extra = max(extra, B.READ_EXTRA2)               # 2択で場面の文を読めなかったときは、読む時間を残す
         look.retime(min(extra, look.q_extra_max()))
@@ -234,9 +243,11 @@ def write_status(st):
         f.write("\n")
 
 def script_of(r):
-    """CSV の1行 → 台本（足りなければ None と理由）"""
+    """CSV の1行 → 台本（足りなければ None と理由）。
+    タイトル（title）は版6の掴みに使う（2択の場面）。フォントに無い文字がタイトルの場面の部分にあれば、タイトルは使わない
+    （掴みは問題1行目から作る。台本は見送らない）。"""
     sc = {"q1": r.get("問題1行目", ""), "q2": r.get("問題2行目", ""), "a": r.get("選択肢A", ""), "b": r.get("選択肢B", ""),
-          "c": r.get("選択肢C", ""), "answer": r.get("正解", ""), "trap": r.get("ひっかけ", "")}
+          "c": r.get("選択肢C", ""), "answer": r.get("正解", ""), "trap": r.get("ひっかけ", ""), "title": r.get("タイトル", "")}
     sc = {k: str(v or "").strip() for k, v in sc.items()}
     ok = ("A", "B", "C") if sc["c"] else ("A", "B")          # 選択肢C が空なら2択（これ違反？など）
     if not (sc["q1"] and sc["a"] and sc["b"] and sc["trap"] and sc["answer"].upper() in ok):
@@ -246,6 +257,10 @@ def script_of(r):
         sc[k], b = safe_text(sc[k]); bad += b
     if bad:
         return None, "使えない文字：" + "".join(sorted(set(bad)))
+    sc["title"], bad_t = safe_text(sc["title"])
+    if bad_t and any(ch in B.title_scene(sc["title"]) for ch in bad_t):
+        print("注意：タイトルの場面にフォントに無い文字があるので、掴みは問題1行目から作ります：", "".join(sorted(set(bad_t))))
+        sc["title"] = ""
     return sc, ""
 
 def read_rows(cfg):
@@ -361,10 +376,13 @@ SAMPLE = {"q1": "「高度150m以上」の空域", "q2": "150mは*どこから*�
           "c": "飛行場の標点", "answer": "B", "trap": "ひっかけ：*海抜*ではない！"}
 
 def sheet_times(look):
-    """見せ場の時刻（1こま目・3択・カウントダウン・正解・ひっかけ・締めの声・転換・最後）"""
+    """見せ場の時刻（1こま目・（版6：問題の画面）・3択・カウントダウン・正解・ひっかけ・締めの声・転換・最後）"""
     T = look.T
-    ts = [(0.0, "1こま目"), (1.4, "3択"), (T.count0 + 1.2, "カウントダウン"), (T.reveal + 0.45, "正解"),
-          (min(T.trap + 1.7, (T.cta0 or T.tr0) - 0.1), "ひっかけ")]
+    ts = [(0.0, "1こま目（掴み）" if T.hook else "1こま目")]
+    if T.hook:
+        ts.append((T.start + 0.1, "問題の画面"))
+    ts += [(T.start + 1.4, "3択"), (T.count0 + 1.2, "カウントダウン"), (T.reveal + 0.45, "正解"),
+           (min(T.trap + 1.7, (T.cta0 or T.tr0) - 0.1), "ひっかけ")]
     if T.cta:
         ts.append((T.cta0 + 1.1, "締めの声"))
     ts += [(T.sw, "転換"), (T.dur - 1.0 / FPS, "最後")]

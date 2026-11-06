@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """見た目の版5（掴み・ループ）の決まりを確かめる。動画は書き出さない（数秒で終わる）。
+themes の「見た目の版」が6以上になっても、版5の動き（版を5にしたとき）が変わっていないことを確かめる。版6は test_render_v6.py。
 
   python tests/test_render_v5.py
 """
@@ -19,6 +20,7 @@ def small_theme():
     th = render.load_theme()
     th["画質"] = "720x1280"          # 確かめは小さい画面で
     th["声"] = dict(th.get("声", {}), 使う=False)
+    th["見た目の版"] = 5              # 版5の動きを確かめる
     return th
 
 

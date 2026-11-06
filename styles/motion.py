@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-"""型1「モーション」：平らな図形がすっと動く、モーショングラフィックス風。"""
+"""型1「モーション」：平らな図形がすっと動く、モーショングラフィックス風。
+版6：1こま目は掴み（大きな白い場面の1行・黄色の札・呼びかけ）。1.2秒で掴みが上へ抜け、問題文が下から入る。"""
 import math
 import numpy as np
 from PIL import Image, ImageDraw
 import drawkit as dk
-from drawkit import (CX, SAFE, PAD, paste, prog, ease_out, ease_back, ease_in_out, with_alpha, rrect, circle, shadow,
+from drawkit import (CX, SAFE, PAD, paste, prog, ease_out, ease_in, ease_back, ease_in_out, with_alpha, rrect, circle, shadow,
                      text_sprite, cached, aa_shape)
-from .base import Look, Q_X, CARD_X, CARD_W, FOOT_Y, CREDIT_Y, LABEL_Y, ICON_X
+from .base import Look, Q_X, CARD_X, CARD_W, FOOT_Y, CREDIT_Y, LABEL_Y, ICON_X, HOOK_TR
 
 
 class Motion(Look):
@@ -28,7 +29,12 @@ class Motion(Look):
         self.tb = self.trap_block(c["文字"], c["強調"], 516, min_px=24, room=self.trap_room(50), px=38)
         self.trap_img = self.make_trap()
         self.cta_img = self.make_cta() if self.T.cta else None
-        self.hook_img = self.make_hook()
+        self.head_img = self.make_head()                 # 見出し・番号（どの画面でも同じ）
+        self.q_img = self.make_question()                # 問題文
+        self.q_state = self.merge(self.head_img, self.q_img)
+        if self.v6:
+            self.tsu_img = self.make_tsukami()            # 掴み（場面・札・呼びかけ）
+            self.tsu_state = self.merge(self.head_img, self.tsu_img)
 
     # ---------- 動かない部品 ----------
     def make_bg(self):
@@ -45,8 +51,15 @@ class Motion(Look):
         img = dk.vignette(img, 0.35)
         return dk.add_grain(img, 5.0, 3)
 
-    def make_hook(self):
-        """1こま目の絵（見出し・番号・問題文）。最後に戻る絵も同じものを使う（くり返し再生がつながるように）"""
+    @staticmethod
+    def merge(*layers):
+        img = Image.new("RGBA", (dk.W, dk.H), (0, 0, 0, 0))
+        for layer in layers:
+            img.alpha_composite(layer)
+        return img
+
+    def make_head(self):
+        """見出し（ラベル）と番号。版5の1こま目＝これと問題文。版6の1こま目＝これと掴み"""
         c = self.c
         img = Image.new("RGBA", (dk.W, dk.H), (0, 0, 0, 0))
         spr = text_sprite(self.label_text(), c["強調"], "Bold", 26)
@@ -55,10 +68,34 @@ class Motion(Look):
         paste(img, spr, SAFE["left"] + 11, LABEL_Y, anchor="lc")
         no = text_sprite(self.no_text(), c["うすい文字"], "Bold", 24)
         paste(img, no, SAFE["left"] + tw + 22 + 14, LABEL_Y, anchor="lc")
+        return img
+
+    def make_question(self):
+        """問題文（左の黄色の棒つき）"""
+        c = self.c
+        img = Image.new("RGBA", (dk.W, dk.H), (0, 0, 0, 0))
         qb = self.qb
         paste(img, rrect(6, max(1, qb.h - 8), 3, c["強調"]), SAFE["left"] - 4, self.q_y)
         for i, li in enumerate(self.q_imgs):
             paste(img, li, Q_X - PAD, self.q_y + i * qb.line_h - PAD)
+        return img
+
+    def make_tsukami(self):
+        """版6の1こま目（掴み）：大きな白い場面の1行・黄色の札・コメントの呼びかけ。最後に戻る絵も同じ"""
+        c = self.c
+        sb = self.scene_block(c["文字"], c["強調"], "Black")
+        tb = self.tag_block(c["カードの文字"], c.get("カードの強調", c["カードの文字"]), "Black")
+        pb = self.prompt_block(c["文字"], c["強調"], "Bold")
+        self.place_hook(sb, tb, pb)
+        img = Image.new("RGBA", (dk.W, dk.H), (0, 0, 0, 0))
+        self.centered_lines(img, sb, sb.line_images(), self.hk_scene_y)
+        if tb is not None:
+            w, h = self.tag_box()
+            x, y = CX - w / 2, self.hk_tag_y
+            paste(img, shadow(w, h, 20, 12, 110), x - 24, y + 6 - 24)
+            paste(img, rrect(w, h, min(h / 2, 26), c["強調"]), x - 4, y - 4)
+            self.centered_lines(img, tb, tb.line_images(), y + (h - tb.h) / 2)
+        self.centered_lines(img, pb, pb.line_images(), self.hk_prompt_y)
         return img
 
     def make_card(self, i, done):
@@ -136,23 +173,51 @@ class Motion(Look):
     def frame(self, t):
         T = self.T
         cv = self.bg.copy()
-        if t < T.sw:
-            self.hook(cv, t)
+        if t < T.start:                    # 版6：掴み → 問題の画面へ（版5は start=0 なので通らない）
+            self.opening(cv, t)
+        elif t < T.sw:
+            self.question(cv, t)
             self.draw_cards(cv, t)
             self.countdown(cv, t)
             self.answer(cv, t)
             self.cta(cv, t)
             self.footer(cv, t)
         else:
-            self.hook(cv, t - T.dur)       # 1こま目と同じ絵へ戻る（ローターの回り方も、次の1こま目につながる）
+            self.first(cv, t - T.dur)      # 1こま目と同じ絵へ戻る（ローターの回り方も、次の1こま目につながる）
         self.wipe(cv, t)
         return cv.convert("RGB")
 
-    def hook(self, cv, t):
-        cv.alpha_composite(self.hook_img)
+    def icon(self, cv, t):
         body, arcs = self.drone_icon(self.c["強調"], t)
         paste(cv, body, ICON_X, LABEL_Y, anchor="cc")
         paste(cv, arcs, ICON_X, LABEL_Y, anchor="cc")
+
+    def question(self, cv, t):
+        """問題の画面（見出し・番号・ドローン・問題文）。版5ではこれが1こま目"""
+        cv.alpha_composite(self.q_state)
+        self.icon(cv, t)
+
+    def first(self, cv, t):
+        """1こま目の絵（版6＝掴み、版5＝問題の画面）。最後に戻る絵も同じ"""
+        if self.v6:
+            cv.alpha_composite(self.tsu_state)
+            self.icon(cv, t)
+        else:
+            self.question(cv, t)
+
+    def opening(self, cv, t):
+        """版6：HOOK 秒たったら、掴みが上へ抜けて消え、問題文が下から入る（見出し・番号・ドローンは動かない）"""
+        T = self.T
+        p = prog(t, T.hook0, T.start)
+        if p <= 0:
+            self.first(cv, t)
+            return
+        cv.alpha_composite(self.head_img)
+        out = prog(t, T.hook0, T.hook0 + HOOK_TR * 0.55)          # 前半で掴みが上へ抜けて消え、
+        paste(cv, self.tsu_img, 0, -80 * ease_in(out), alpha=1 - ease_out(out))
+        q = ease_out(prog(t, T.hook0 + HOOK_TR * 0.4, T.start))  # 後半で問題文が下から入る（重なりは短く）
+        paste(cv, self.q_img, 0, 48 * (1 - q), alpha=q)
+        self.icon(cv, t)
 
     def card_pos(self, i):
         return CARD_X - 24, self.card_y[i] - 24
@@ -285,6 +350,8 @@ class Motion(Look):
     def sounds(self):
         T = self.T
         ev = [("swoosh", 0.0, 0.12, 0.3)]
+        if T.hook:
+            ev.append(("swoosh", T.hook0 - 0.05, 0.2, HOOK_TR + 0.15))     # 掴み → 問題の画面
         for i, ct in enumerate(self.card_t):
             ev.append(("pop" + str(i), ct + 0.05, 0.36, 0))
         for tk in T.ticks:

@@ -197,11 +197,73 @@ def layout(text_lines, weight, max_w, max_lines, px, min_px, step=2, cap=0.84, k
         p -= step
 
 
-class TextBlock:
-    """折り返し済みの文字のかたまり。行ごとの画像と、強調部分の位置を持つ。"""
+def balanced_layout(text_lines, weight, max_w, max_lines, px, min_px, step=2, keep_emphasis=False):
+    """大きな見出し向けの折り返し：言葉の切れ目（_break_score が 1 以上の所）だけで max_lines 行までに分け、
+    いちばん大きく置ける分け方を選ぶ（同じ大きさなら、行が少ない・切れ目が自然（句読点のあとを少し優先）・行の長さがそろう方）。
+    「改行しない言葉」では分けない。強調のまとまりの途中は、_break_score の減点のぶん避ける
+    （keep_emphasis なら、さらに1点減らす）。
+    px〜min_px で見つからなければ None（呼ぶ側で layout() を使う）。返り値は layout() と同じ (行, 大きさ, True)"""
+    from itertools import combinations
+    if len(text_lines) != 1:
+        return None
+    chars = [(ch, col, emp) for s, col, emp in text_lines[0] for ch in s]
+    n = len(chars)
+    if not n:
+        return None
+    text = "".join(c[0] for c in chars)
+    glue = set()
+    for word in NO_BREAK_WORDS:
+        for m in re.finditer(re.escape(word), text):
+            glue.update(range(m.start() + 1, m.end()))
+    f100 = font(weight, 100)
+    unit = [f100.getlength(c[0]) / R / 100 for c in chars]        # 1px あたりの幅（論理座標）
+    cand = []
+    for k in range(1, n):
+        if k in glue:
+            continue
+        s = _break_score(chars[k - 1], chars[k])
+        nxt2 = chars[k + 1][0] if k + 1 < n else ""
+        if chars[k][0] in PARTICLES and chars[k - 1][0] in "」』）】" and not (chars[k][0] == "で" and nxt2 in "なはすし"):
+            s = 0                                        # 「夜間飛行」｜は のように、行の頭に助詞を置かない（「でない」などは可）
+        if s > 0 and chars[k - 1][0] in "、。，．！？」』）】":
+            s += 1                                       # 句読点やかっこの後ろは、いちばん自然な切れ目
+        if keep_emphasis and chars[k - 1][2] and chars[k][2]:
+            s -= 1
+        if s > 0:
+            cand.append((k, s))
+    best = None
+    for nb in range(0, max(1, max_lines)):
+        for combo in combinations(cand, nb):
+            cuts = [0] + [k for k, _ in combo] + [n]
+            ws = [sum(unit[a:b]) for a, b in zip(cuts[:-1], cuts[1:])]
+            p = min(px, int(max_w / max(ws) / step) * step)
+            if p < min_px:
+                continue
+            key = (p, -nb, sum(s for _, s in combo), -(max(ws) - min(ws)))
+            if best is None or key > best[0]:
+                best = (key, cuts)
+    if best is None:
+        return None
+    (p, _, _, _), cuts = best
+    lines = [chars[a:b] for a, b in zip(cuts[:-1], cuts[1:])]
+    while p > min_px:                                   # 実際の字の幅（ヒンティング）でも収まるか確かめる
+        f = font(weight, p)
+        if all(f.getlength("".join(c[0] for c in l)) / R <= max_w for l in lines):
+            break
+        p -= step
+    return [_merge(l) for l in lines], p, True
 
-    def __init__(self, text_lines, weight, max_w, max_lines, px, min_px, line_h=1.32, align="left", cap=0.84, keep_emphasis=False):
-        self.lines, self.px, self.fits = layout(text_lines, weight, max_w, max_lines, px, min_px, cap=cap, keep_emphasis=keep_emphasis)
+
+class TextBlock:
+    """折り返し済みの文字のかたまり。行ごとの画像と、強調部分の位置を持つ。
+    balanced=True なら、言葉の切れ目だけで分けて、いちばん大きく置ける分け方を選ぶ（大きな見出し向け。balanced_layout）。"""
+
+    def __init__(self, text_lines, weight, max_w, max_lines, px, min_px, line_h=1.32, align="left", cap=0.84, keep_emphasis=False,
+                 balanced=False):
+        got = balanced_layout(text_lines, weight, max_w, max_lines, px, min_px, keep_emphasis=keep_emphasis) if balanced else None
+        if got is None:
+            got = layout(text_lines, weight, max_w, max_lines, px, min_px, cap=cap, keep_emphasis=keep_emphasis)
+        self.lines, self.px, self.fits = got
         self.weight, self.align = weight, align
         self.line_h = self.px * line_h
         f = font(weight, self.px)

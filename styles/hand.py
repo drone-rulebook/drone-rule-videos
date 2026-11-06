@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """手で書いていく型（黒板・ノート）の共通部分。文字は書き順のように左から現れ、丸や線は引いていくように伸びる。
-見た目の版5：1こま目から見出しと問題文は書き終わった状態（掴み）。選択肢から先を書いていく。最後は問題だけの画面へ戻る。"""
+見た目の版5：1こま目から見出しと問題文は書き終わった状態（掴み）。選択肢から先を書いていく。最後は問題だけの画面へ戻る。
+見た目の版6：1こま目は掴み（大きな場面の1行・囲んだ問いの札・呼びかけ。書き終わった状態）。1.2秒で型ごとの場面転換
+（黒板消し・ページめくり。swap）で問題の画面へ移り、そこから先は版5と同じ。最後も同じ場面転換で掴みの画面へ戻る。"""
 import math
 import drawkit as dk
 from drawkit import (CX, SAFE, PAD, paste, prog, ease_out, text_sprite, wobble_path, ellipse_path, partial, stroke_sprite,
@@ -51,6 +53,8 @@ class Hand(Look):
         self.make_trap()
         self.make_cta()
         self.make_small()
+        if self.v6:
+            self.make_tsukami()
 
     # ---------- 型ごとに上書き ----------
     def colors(self):
@@ -63,12 +67,18 @@ class Hand(Look):
         return ellipse_path(CARD_X + 30, self.row_cy[i], 26, 25, seed, turns=1.08, amp=0.8)
 
     def emphasis(self, cv, t):
-        """問題文の強調のしるし（黒板＝下線、ノート＝マーカー）。1こま目のあとすぐに引く"""
+        """問題文の強調のしるし（黒板＝下線、ノート＝マーカー）。問題の画面になったあとすぐに引く"""
+        s = self.T.start
         for k, path in enumerate(self.p_under):
-            self.stroke(cv, ("u", k), path, prog(t, 0.15 + 0.1 * k, 0.45 + 0.1 * k), self.em, 3.2)
+            self.stroke(cv, ("u", k), path, prog(t, s + 0.15 + 0.1 * k, s + 0.45 + 0.1 * k), self.em, 3.2)
 
-    def transition(self, t):
+    def swap(self, t, t0, t1, old, new):
+        """場面転換（t0〜t1 に old の画面から new の画面へ。黒板＝黒板消し、ノート＝ページめくり）"""
         raise NotImplementedError
+
+    # 版6の掴みの色（型ごとに上書きしてよい）：札の文字・札の強調・札の囲み・呼びかけ・呼びかけの A/B/C
+    def hook_colors(self):
+        return self.em, self.ink, self.ng, self.sub, self.em
 
     # ---------- 見出し（1こま目から書いてある） ----------
     def make_label(self):
@@ -89,10 +99,62 @@ class Hand(Look):
     def icon_color(self):
         return self.ink
 
-    def hook(self, cv, t):
-        """1こま目の絵（見出し・番号・ドローン・問題文）。最後に戻る絵も同じ"""
+    def question(self, cv, t):
+        """問題の画面（見出し・番号・ドローン・問題文）。版5ではこれが1こま目で、最後に戻る絵も同じ"""
         self.header(cv, t)
         self.write_block(cv, self.qb, self.q_imgs, Q_X, self.q_y, 1.0)
+
+    # ---------- 版6：掴み（1こま目から書き終わった状態） ----------
+    def make_tsukami(self):
+        tag_c, tag_em, self.tag_line, pr_c, pr_em = self.hook_colors()
+        sb = self.scene_block(self.ink, self.em, "Bold")
+        tb = self.tag_block(tag_c, tag_em, "Black")
+        pb = self.prompt_block(pr_c, pr_em, "Bold")
+        self.place_hook(sb, tb, pb)
+        self.hk_s_imgs = self.tex(sb.line_images(), 90)
+        self.hk_t_imgs = self.tex(tb.line_images(), 91) if tb is not None else []
+        self.hk_p_imgs = self.tex(pb.line_images(), 92)
+        w, h = self.tag_box()
+        cy = self.hk_tag_y + h / 2
+        self.p_tag = ellipse_path(CX + 2, cy, w / 2 + 2, h / 2 + 4, self.seed + 93, turns=1.06, amp=1.1, power=3.4) if tb is not None else None
+
+    def tag_mark(self, cv):
+        """札を囲む線（ノートはマーカーに上書き）"""
+        if self.p_tag is not None:
+            self.stroke(cv, "tag", self.p_tag, 1.0, self.tag_line, self.line_w)
+
+    def tsukami(self, cv, t):
+        """版6の1こま目（見出し・番号・ドローン・場面の1行・囲んだ札・呼びかけ）。最後に戻る絵も同じ"""
+        self.header(cv, t)
+        self.tag_mark(cv)
+        self.centered_lines(cv, self.hk_sb, self.hk_s_imgs, self.hk_scene_y)
+        if self.hk_tb is not None:
+            _, h = self.tag_box()
+            self.centered_lines(cv, self.hk_tb, self.hk_t_imgs, self.hk_tag_y + (h - self.hk_tb.h) / 2)
+        self.centered_lines(cv, self.hk_pb, self.hk_p_imgs, self.hk_prompt_y)
+
+    def first_state(self, t):
+        """1こま目の画面（版6＝掴み、版5＝問題の画面）"""
+        cv = self.bg.copy()
+        (self.tsukami if self.v6 else self.question)(cv, t)
+        return cv
+
+    def question_state(self, t):
+        cv = self.bg.copy()
+        self.question(cv, t)
+        return cv
+
+    def opening(self, t):
+        """版6：掴みの画面から、型ごとの場面転換で問題の画面へ"""
+        T = self.T
+        return self.swap(t, T.hook0, T.start, self.first_state(t), self.question_state(t))
+
+    def transition(self, t):
+        """最後：答えとひっかけの画面から、型ごとの場面転換で1こま目と同じ画面へ戻る"""
+        T = self.T
+        cv = self.bg.copy()
+        self.scene(cv, t)
+        return self.swap(t, T.tr0, T.tr1, cv, self.first_state(t - T.dur))
 
     # ---------- 道具 ----------
     def tex(self, imgs, seed):
@@ -128,23 +190,22 @@ class Hand(Look):
     # ---------- 1こま ----------
     def frame(self, t):
         T = self.T
-        if t < T.tr0:
+        if t < T.hook0:                    # 版6：掴み（版5は hook0=start=0 なので、はじめの2つは通らない）
+            cv = self.first_state(t)
+        elif t < T.start:                  # 版6：掴み → 問題の画面
+            cv = self.opening(t)
+        elif t < T.tr0:
             cv = self.bg.copy()
             self.scene(cv, t)
         elif t < T.tr1:
             cv = self.transition(t)
         else:
-            cv = self.hook_state(t - T.dur)
+            cv = self.first_state(t - T.dur)
         return cv.convert("RGB")
-
-    def hook_state(self, t):
-        cv = self.bg.copy()
-        self.hook(cv, t)
-        return cv
 
     def scene(self, cv, t):
         self.emphasis_under(cv, t)
-        self.hook(cv, t)
+        self.question(cv, t)
         self.emphasis(cv, t)
         self.choices(cv, t)
         self.countdown(cv, t)
@@ -268,7 +329,7 @@ class Hand(Look):
         ev = []
         for ct in self.card_t:
             ev.append(("write", ct, 0.26, WRITE + 0.1))
-        ev.append(("write", 0.15, 0.12, 0.3))                 # 強調の線
+        ev.append(("write", T.start + 0.15, 0.12, 0.3))       # 強調の線
         for tk in T.ticks:
             ev.append(("tap", tk, 0.55, 0))
             ev.append(("tick", tk, 0.25, 0))

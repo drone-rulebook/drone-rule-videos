@@ -4,11 +4,15 @@
 流れ（秒・見た目の版5）：1こま目から問題の全文（掴み）→ 3択 → カウントダウン（3.4〜6.4）→ 正解（6.4）→ ひっかけ（7.1〜）
   →（締めの声を使う動画だけ：毎日1問の帯と声 2.0秒。声は戻る場面転換の途中まで）→ 問題だけの画面へ戻る（1こま目と同じ絵なので、くり返し再生がつながる）
   問題の読み上げが長いときは、カウントダウンから後ろを、読み終わるまで後ろへずらす（Timeline の extra）。
+流れ（見た目の版6）：1こま目は「掴み」＝見出しと、画面の真ん中に大きな場面の1行・問いの札・コメントの呼びかけ（0〜1.2秒）
+  → 0.3秒で問題の画面へ移る → そこから先は版5と同じ流れを1.5秒（HOOK_SHIFT）ずらしたもの → 最後は掴みの画面へ戻る（くり返し再生がつながる）。
+  2択：場面＝タイトルの「、これ違反？」より前、札＝「これ違反？」。3択：場面＝問題1行目、札＝問題2行目（hook_texts）。
+  版5か版6かは themes の「見た目の版」で決まる（6 以上で版6。Look.v6）。
 置き場所：大事な文字は drawkit.SAFE の中（下の約4分の1と右端は YouTube の題名やボタンが重なるので避ける）。
   SAFE の下のほうの細い帯（FOOT_Y あたり）は、「毎日18時に1問」と声のクレジットの小さな文字に使う。
 """
 import re, zlib
-from drawkit import SAFE, PAD, TextBlock, segments, rgba, paste, crop_reveal
+from drawkit import SAFE, CX, PAD, TextBlock, segments, rgba, paste, crop_reveal
 import drawkit as dk
 
 # ---------- 流れ（どの型も同じ。動画ごとのずれは Timeline で） ----------
@@ -23,6 +27,12 @@ Q_EXTRA_MAX = 1.2                # 読み上げが長いとき、後ろへずら
 Q_EXTRA_MAX2 = 2.6               # 同じ（2択。場面の文が長いので）
 READ_EXTRA2 = 1.0                # 声なしの2択で、場面を読む時間として足す秒数
 
+# ---------- 流れ（版6：はじめに掴みの画面） ----------
+HOOK_VERSION = 6                 # themes の「見た目の版」がこれ以上なら、掴みの画面を入れる
+HOOK = 1.2                       # 掴み（大きな場面の1行・問いの札・呼びかけ）だけを見せる長さ
+HOOK_TR = 0.3                    # 掴みから問題の画面へ移る長さ
+HOOK_SHIFT = HOOK + HOOK_TR      # 版5の流れ（問題の画面から先）を後ろへずらす秒数
+
 # ---------- 置き場所（論理座標 720×1280） ----------
 Q_X, Q_Y, Q_W = 52, 168, 540     # 問題文
 CARD_X, CARD_W = SAFE["left"], 564
@@ -33,20 +43,35 @@ CREDIT_Y = 941                   # 声のクレジット
 LABEL_Y = 126                    # 見出しの行（縦の真ん中）
 ICON_X, ICON_R = 566, 30         # ドローンの絵（真ん中の x と半径）。SAFE の右端 600 の内側
 
+# ---------- 置き場所（版6の掴み。真ん中そろえで CX に置く） ----------
+HOOK_TOP = LABEL_Y + 44          # 掴みの文字を置いてよい上の端（見出しの下）
+HOOK_W = SAFE["right"] - SAFE["left"] - 12   # 場面の1行の横幅（左右に少し余白）
+SCENE_PX, SCENE_MIN = 108, 72    # 場面の1行の大きさ（問題文 54〜58 の約1.6〜2倍。3行に収まるまで小さくする）
+TAG_PX, TAG3_PX = 80, 62         # 問いの札の大きさ（2択の「これ違反？」／3択の問題2行目。2行まで）
+TAG_PAD = (30, 12)               # 札の文字のまわりの余白（横・縦）
+HOOK_PROMPT_PX = 40              # コメントの呼びかけ
+HOOK_GAPS = (40, 30)             # 場面と札の間・札と呼びかけの間
+
 
 class Timeline:
-    """1本の動画の時刻表。extra＝カウントダウンから後ろを後ろへずらす秒数。cta＝締めの声を入れるか。"""
+    """1本の動画の時刻表。extra＝カウントダウンから後ろを後ろへずらす秒数。cta＝締めの声を入れるか。
+    hook＝版6の掴みを頭に入れるか（入れると、問題の画面から先を HOOK_SHIFT 秒ずらす。start がその時刻）。"""
 
-    def __init__(self, extra=0.0, cta=False):
-        self.set(extra, cta)
+    def __init__(self, extra=0.0, cta=False, hook=False):
+        self.set(extra, cta, hook)
 
-    def set(self, extra, cta):
+    def set(self, extra, cta, hook=None):
+        self.hook = bool(getattr(self, "hook", False) if hook is None else hook)
+        s = HOOK_SHIFT if self.hook else 0.0
+        self.hook0 = HOOK if self.hook else 0.0      # 掴みから問題の画面へ移り始める時刻
+        self.start = s                               # 問題の画面（版5の流れの0秒）になる時刻
+        self.count0_base = COUNT0 + s                # ずれ（extra）なしのときのカウントダウンの始まり
         e = max(0.0, float(extra))
         self.extra, self.cta = e, bool(cta)
-        self.count0, self.count1 = COUNT0 + e, COUNT1 + e
-        self.reveal = REVEAL + e
-        self.trap = TRAP + e
-        t = TR0 + e
+        self.count0, self.count1 = COUNT0 + s + e, COUNT1 + s + e
+        self.reveal = REVEAL + s + e
+        self.trap = TRAP + s + e
+        t = TR0 + s + e
         if self.cta:
             self.cta0, self.cta1 = t, t + CTA_LEN
             t += CTA_LEN
@@ -60,10 +85,56 @@ class Timeline:
     def times(self):
         """声と BGM に使う時刻（render.py・voice.py・audio.py が読む）"""
         trap_end = (self.cta0 - 0.05) if self.cta else (self.tr1 - 0.1)
-        return {"count0": self.count0, "reveal": self.reveal, "ticks": list(self.ticks),
+        return {"count0": self.count0, "reveal": self.reveal, "ticks": list(self.ticks), "start": self.start,
                 "q": (0.15, self.count0 - 0.1), "ans": (self.reveal + 0.1, self.reveal + 1.0),
                 "trap": (self.reveal + 1.05, trap_end),
                 "cta": (self.cta0 + 0.05, self.tr1 - 0.05) if self.cta else None}
+
+
+def version_of(theme):
+    """themes の「見た目の版」の数（読めなければ 0）"""
+    try:
+        return int(str(theme.get("見た目の版", 0)).strip())
+    except ValueError:
+        return 0
+
+
+def title_scene(title, tag="これ違反？"):
+    """タイトル「（場面）、これ違反？｜ドローン国家資格・二等学科」から場面の部分を取り出す（取れなければ ""）。
+    「｜」から後ろは使わない。タイトルに札（これ違反？）が無ければ、「｜」より前の全部を場面にする。"""
+    s = re.split(r"[｜|]", str(title or ""), maxsplit=1)[0].strip()
+    core = str(tag or "").strip().rstrip("？?！!").strip()
+    if core and core in s:
+        i = s.index(core)
+        s = s[:i] if s[:i].strip(" 　、，,。．") else s[i + len(core):]
+    return s.strip().strip("、，,。．・：:；; 　？?").strip()
+
+
+def first_sentence(q):
+    """文の最初の「。」まで（「。」が無ければ全部）"""
+    s = str(q or "").strip()
+    return s.split("。")[0].strip() or s
+
+
+def hook_texts(sc, words=None):
+    """版6の掴みの文字 (場面, 問いの札, コメントの呼びかけ)。文言は themes の「文言」から（無ければ既定の言葉）。
+    2択（選択肢C が空）：場面＝タイトルの「、これ違反？」より前、札＝「これ違反？」、呼びかけ＝「AかBで答えてね」。
+      タイトルが空など場面が取れなければ、問題1行目の最初の文。
+    3択：場面＝問題1行目、札＝問題2行目、呼びかけ＝「A・B・Cどれ？コメントで」。
+      問題2行目が空なら、問題1行目を最後の「。」で分ける（前＝場面、後ろ＝札）。分けられなければ札なし。"""
+    w = words or {}
+    q1, q2 = str(sc.get("q1", "")).strip(), str(sc.get("q2", "")).strip()
+    if not str(sc.get("c", "")).strip():
+        tag = w.get("掴みの問い（2択）") or "これ違反？"
+        scene = title_scene(sc.get("title", ""), tag) or first_sentence(q1)
+        prompt = w.get("掴みの呼びかけ（2択）", "AかBで答えてね")
+    else:
+        scene, tag = q1, q2
+        body = q1.rstrip("。")
+        if not tag and "。" in body:
+            scene, tag = body.rsplit("。", 1)
+        prompt = w.get("掴みの呼びかけ（3択）", "A・B・Cどれ？コメントで")
+    return scene.strip(), tag.strip(), prompt.strip()
 
 
 def id_number(vid):
@@ -85,7 +156,7 @@ def cta_on(vid, theme):
 
 class Look:
     name = "base"
-    card_t = [0.3, 0.5, 0.7]      # 選択肢が出る時刻
+    card_t = [0.3, 0.5, 0.7]      # 選択肢が出る時刻（問題の画面になってからの秒。版6は T.start だけ後ろ）
 
     def __init__(self, sc, theme, colors, vid=None):
         self.theme, self.words = theme, theme["文言"]
@@ -98,8 +169,10 @@ class Look:
         self.no = id_number(vid)
         self.voice_credit = ""
         self.seed = zlib.crc32((sc["q1"] + sc.get("q2", "")).encode("utf-8"))
-        self.T = Timeline(READ_EXTRA2 if self.n == 2 else 0.0, cta_on(vid, theme))
-        self.card_t = list(type(self).card_t)[:self.n]
+        self.v6 = version_of(theme) >= HOOK_VERSION                 # 版6：1こま目は掴みの画面
+        self.T = Timeline(READ_EXTRA2 if self.n == 2 else 0.0, cta_on(vid, theme), hook=self.v6)
+        self.card_t = [self.T.start + x for x in list(type(self).card_t)[:self.n]]   # 問題の画面になってからの時刻
+        self.hook_scene, self.hook_tag, self.hook_prompt = hook_texts(sc, self.words) if self.v6 else ("", "", "")
 
     # ---------- 時刻表 ----------
     @property
@@ -107,11 +180,70 @@ class Look:
         return self.T.dur
 
     def retime(self, extra):
-        """カウントダウンから後ろを extra 秒だけ後ろへずらす（読み上げの長さに合わせる）"""
+        """カウントダウンから後ろを extra 秒だけ後ろへずらす（読み上げの長さに合わせる。掴みの有無はそのまま）"""
         self.T.set(extra, self.T.cta)
 
     def q_extra_max(self):
         return Q_EXTRA_MAX2 if self.n == 2 else Q_EXTRA_MAX
+
+    # ---------- 版6：掴みの画面（場面の1行・問いの札・コメントの呼びかけ） ----------
+    def scene_block(self, base, accent, weight="Black", px=SCENE_PX, min_px=SCENE_MIN, max_w=HOOK_W):
+        """場面の1行（真ん中そろえ）。言葉の切れ目だけで3行までに分け、いちばん大きく置ける分け方を使う
+        （ふつうは min_px 以上。長い場面だけ 46 まで小さくし、それでも入らなければ5行まで）。
+        言葉の切れ目で分けられないときだけ、ふつうの折り返しにする。"""
+        paras = [segments(self.hook_scene, base, accent)]
+        tiers = ((3, px, min_px), (3, min_px, 46), (5, 46, 30))
+        for lines, a, b in tiers:
+            if dk.balanced_layout(paras, weight, max_w, lines, a, b, keep_emphasis=True) is not None:
+                return TextBlock(paras, weight, max_w, lines, a, b, line_h=1.2, align="center", keep_emphasis=True, balanced=True)
+        tb = None
+        for lines, a, b in tiers:
+            tb = TextBlock(paras, weight, max_w, lines, a, b, line_h=1.2, align="center", cap=0.86, keep_emphasis=True)
+            if tb.fits:
+                break
+        return tb
+
+    def tag_block(self, base, accent, weight="Black", max_w=HOOK_W - 2 * TAG_PAD[0] - 16):
+        """問いの札の文字（2択は「これ違反？」を1行、3択は問題2行目を2行まで。真ん中そろえ）。札が無ければ None"""
+        if not self.hook_tag:
+            return None
+        paras = [segments(self.hook_tag, base, accent)]
+        if self.n == 2:
+            return TextBlock(paras, weight, max_w, 1, TAG_PX, 40, line_h=1.24, align="center")
+        return TextBlock(paras, weight, max_w, 2, TAG3_PX, 34, line_h=1.24, align="center", cap=0.86, keep_emphasis=True,
+                         balanced=True)
+
+    def prompt_block(self, base, accent, weight="Bold", px=HOOK_PROMPT_PX):
+        """コメントの呼びかけ（A・B・C の文字だけ accent の色）"""
+        segs = [(ch, accent if ch in "ABC" else base, ch in "ABC") for ch in self.hook_prompt]
+        return TextBlock([segs], weight, HOOK_W, 1, px, 24, line_h=1.3, align="center")
+
+    def tag_box(self):
+        """問いの札の箱の大きさ（幅・高さ。札が無ければ 0, 0）"""
+        tb = self.hk_tb
+        if tb is None:
+            return 0.0, 0.0
+        return tb.w + 2 * TAG_PAD[0], tb.h + 2 * TAG_PAD[1]
+
+    def place_hook(self, sb, tb, pb):
+        """掴みの3つ（場面・札・呼びかけ）を縦に並べ、見出しの下〜CONTENT_BOTTOM の真ん中に置く。
+        決まるもの：hk_scene_y・hk_tag_y（札の箱の上の端）・hk_prompt_y・hk_bottom（いずれも論理座標の上の端）"""
+        self.hk_sb, self.hk_tb, self.hk_pb = sb, tb, pb
+        _, box_h = self.tag_box()
+        g1, g2 = HOOK_GAPS
+        total = sb.h + (g1 + box_h if tb is not None else 0) + g2 + pb.h
+        mid = (HOOK_TOP + CONTENT_BOTTOM) / 2 - 12
+        top = max(HOOK_TOP, min(CONTENT_BOTTOM - total, mid - total / 2))
+        self.hk_scene_y = top
+        self.hk_tag_y = top + sb.h + g1
+        self.hk_prompt_y = (self.hk_tag_y + box_h if tb is not None else top + sb.h) + g2
+        self.hk_bottom = self.hk_prompt_y + pb.h
+
+    @staticmethod
+    def centered_lines(cv, tb, imgs, y, alpha=1.0):
+        """TextBlock を CX の真ん中そろえで、上の端 y から貼る"""
+        for i, img in enumerate(imgs):
+            paste(cv, img, CX - tb.widths[i] / 2 - PAD, y + i * tb.line_h - PAD, alpha=alpha)
 
     # ---------- 置き場所 ----------
     def place(self, qb, card_h=108, gap=14, zone=ZONE):
