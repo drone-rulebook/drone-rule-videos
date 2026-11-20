@@ -3,5 +3,6 @@
 from .motion import Motion
 from .chalk import Chalk
 from .notebook import Notebook
+from .jissha import Jissha
 
-LOOKS = {Motion.name: Motion, Chalk.name: Chalk, Notebook.name: Notebook}
+LOOKS = {Motion.name: Motion, Chalk.name: Chalk, Notebook.name: Notebook, Jissha.name: Jissha}
