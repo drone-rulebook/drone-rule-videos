@@ -13,6 +13,8 @@ import voice  # noqa: E402
 import audio  # noqa: E402
 import drawkit as dk  # noqa: E402
 from styles import LOOKS, base as B  # noqa: E402
+from styles import jissha  # noqa: E402
+jissha.Jissha.still = True   # 実写の背景は止めて、文字と動きの決まりだけを確かめる（動く背景は test_render_v7）
 
 TITLE = "知人のドローンを借りて飛ばす、これ違反？｜ドローン国家資格・二等学科"
 TWO = {"q1": "知人の登録機（記号表示・リモートID付）を借りて飛行。DID外・空港等遠方、昼・目視内20m、30m内人物件・催し等なし",

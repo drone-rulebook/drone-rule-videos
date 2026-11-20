@@ -63,6 +63,11 @@ def choose_look(vid, theme, row=None):
     names = sel["型"]
     if row and str(row.get("型", "")).strip() in LOOKS:
         return str(row["型"]).strip()
+    js = theme.get("実写の背景", {})            # 版7：決めた枠（朝など）の行だけ、背景が実写の型にする
+    if row and js.get("使う") and str(row.get("枠", "")).strip() in (js.get("枠") or []) and "実写" in LOOKS:
+        from styles import jissha
+        if jissha.clips(theme):
+            return "実写"
     if sel.get("方法") == "固定":
         return names[0]
     nums = re.findall(r"\d+", vid)

@@ -1,0 +1,36 @@
+name: 実写の素材をとる
+
+on:
+  push:
+    branches: [v7-jissha]
+    paths:
+      - "footage/sources.json"
+      - "footage/fetch_footage.py"
+      - ".github/workflows/footage.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  footage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: 道具を入れる
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+      - name: 素材を確かめて取る
+        run: python3 footage/fetch_footage.py
+      - name: 置く
+        if: always()
+        run: |
+          rm -rf footage/_tmp
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A footage
+          if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
+          git commit -q -m "実写の素材を取る $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M')"
+          git push -q origin HEAD:${GITHUB_REF_NAME}

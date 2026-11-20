@@ -11,6 +11,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 import render  # noqa: E402
 from styles import LOOKS, base as B  # noqa: E402
+from styles import jissha  # noqa: E402
+jissha.Jissha.still = True   # 実写の背景は止めて、文字と動きの決まりだけを確かめる（動く背景は test_render_v7）
 
 TWO = {"q1": "DID内の*自宅の庭*で200gの機体を昼・目視内で飛行（許可なし）", "q2": "これ違反？", "a": "違反になる",
        "b": "違反にならない", "c": "", "answer": "A", "trap": "ポイント：規制は土地でなく*空域*"}
