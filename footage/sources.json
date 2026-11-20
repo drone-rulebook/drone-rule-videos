@@ -1,0 +1,24 @@
+{
+ "note": "実写の背景（見た目の版7）に使う空撮の素材の候補。Mixkit の一覧ページ（空撮・ドローン）から、人混み・夜の街・空港・ロゴ・人や建物の上を低く飛ぶ映像を除いて選んだ。fetch_footage.py が各ページで使用許諾の表示を確かめ、Restricted（収益化に使えない）や表示が読めないものは使わない。",
+ "clips": [
+  {"id": 2168, "page": "https://mixkit.co/free-stock-video/bright-orange-sunset-on-beach-2168/"},
+  {"id": 4266, "page": "https://mixkit.co/free-stock-video/rocky-mounds-near-the-seashore-4266/"},
+  {"id": 51501, "page": "https://mixkit.co/free-stock-video/flying-over-a-green-mangrove-swamp-with-mountain-in-the-51501/"},
+  {"id": 36615, "page": "https://mixkit.co/free-stock-video/aerial-panorama-of-a-coast-and-its-reliefs-36615/"},
+  {"id": 100415, "page": "https://mixkit.co/free-stock-video/lush-green-mountains-under-cloudy-skies-100415/"},
+  {"id": 5008, "page": "https://mixkit.co/free-stock-video/turquoise-blue-water-bay-from-above-5008/"},
+  {"id": 5002, "page": "https://mixkit.co/free-stock-video/landscape-of-a-lake-during-a-red-sunset-5002/"},
+  {"id": 4999, "page": "https://mixkit.co/free-stock-video/beautiful-sunset-on-a-bay-from-above-4999/"},
+  {"id": 27028, "page": "https://mixkit.co/free-stock-video/landscape-of-a-mountainous-valley-at-sunrise-27028/"},
+  {"id": 51502, "page": "https://mixkit.co/free-stock-video/overhead-view-of-a-rocky-coast-and-waves-crashing-51502/"},
+  {"id": 41401, "page": "https://mixkit.co/free-stock-video/fly-over-a-huge-canyon-covered-in-vegetation-41401/"},
+  {"id": 529, "page": "https://mixkit.co/free-stock-video/forest-stream-in-the-sunlight-529/"},
+  {"id": 41545, "page": "https://mixkit.co/free-stock-video/flying-over-tree-covered-mountains-41545/"},
+  {"id": 4998, "page": "https://mixkit.co/free-stock-video/landscape-of-a-large-lake-during-sunset-from-the-air-4998/"},
+  {"id": 28342, "page": "https://mixkit.co/free-stock-video/slow-aerial-tour-through-a-mist-covered-forest-28342/"},
+  {"id": 1082, "page": "https://mixkit.co/free-stock-video/natural-seashore-landscape-1082/"},
+  {"id": 5565, "page": "https://mixkit.co/free-stock-video/cinematic-aerial-view-of-countryside-meadow-5565/"},
+  {"id": 41537, "page": "https://mixkit.co/free-stock-video/curvy-road-on-a-tree-covered-hill-41537/"},
+  {"id": 41389, "page": "https://mixkit.co/free-stock-video/aerial-view-of-a-road-that-crosses-through-nature-41389/"}
+ ]
+}
