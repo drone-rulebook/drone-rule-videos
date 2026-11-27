@@ -1,0 +1,43 @@
+name: 解説つきの見本をつくる
+
+on:
+  push:
+    branches: [kaisetsu-sample]
+    paths:
+      - "samples/kaisetsu/見本.csv"
+      - "styles/base.py"
+      - "render.py"
+      - ".github/workflows/kaisetsu-samples.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  samples:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: 道具を入れる
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q pillow numpy imageio-ffmpeg
+      - name: VOICEVOX を立てる
+        run: |
+          docker run -d --rm --name voicevox -p 127.0.0.1:50021:50021 voicevox/voicevox_engine:cpu-latest
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:50021/version && break; sleep 3; done
+      - name: 見本を作る（18時の行に「なぜ？」の解説）
+        run: python render.py --csv samples/kaisetsu/見本.csv samples/kaisetsu/out --sheets
+      - name: 置く
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A samples/kaisetsu/out
+          if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
+          git commit -q -m "解説つきの見本 $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M')"
+          git push -q origin HEAD:${GITHUB_REF_NAME}

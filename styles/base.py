@@ -8,10 +8,16 @@
   → 0.3秒で問題の画面へ移る → そこから先は版5と同じ流れを1.5秒（HOOK_SHIFT）ずらしたもの → 最後は掴みの画面へ戻る（くり返し再生がつながる）。
   2択：場面＝タイトルの「、これ違反？」より前、札＝「これ違反？」。3択：場面＝問題1行目、札＝問題2行目（hook_texts）。
   版5か版6かは themes の「見た目の版」で決まる（6 以上で版6。Look.v6）。
+解説（themes の「解説」→「使う」。台本に「動画の解説」がある行だけ）：ひっかけのあとに「なぜ？」の画面（解説の札）を入れる。
+  長さは解説の読み上げの長さ（声なしは文字数から）。そのあと締めの声・戻る場面転換はそのまま後ろへずれる（Timeline の explain）。
 置き場所：大事な文字は drawkit.SAFE の中（下の約4分の1と右端は YouTube の題名やボタンが重なるので避ける）。
   SAFE の下のほうの細い帯（FOOT_Y あたり）は、「毎日18時に1問」と声のクレジットの小さな文字に使う。
 """
 import re, zlib
+
+
+def with_alpha_(c, a):
+    return (c[0], c[1], c[2], a)
 from drawkit import SAFE, CX, PAD, TextBlock, segments, rgba, paste, crop_reveal
 import drawkit as dk
 
@@ -32,6 +38,21 @@ HOOK_VERSION = 6                 # themes の「見た目の版」がこれ以�
 HOOK = 1.2                       # 掴み（大きな場面の1行・問いの札・呼びかけ）だけを見せる長さ
 HOOK_TR = 0.3                    # 掴みから問題の画面へ移る長さ
 HOOK_SHIFT = HOOK + HOOK_TR      # 版5の流れ（問題の画面から先）を後ろへずらす秒数
+
+# ---------- 解説の画面 ----------
+EX_VOICE0 = 0.45                 # 解説の画面が出てから声を始めるまで
+EX_TAIL = 0.55                   # 声が終わってから次へ移るまで（このうち最後の EX_OUT 秒で消える）
+EX_OUT = 0.3
+EX_MIN, EX_MAX = 6.0, 30.0       # 解説の画面の長さの下限・上限（秒）
+EX_CPS = 7.0                     # 声なしのとき、1秒に読む字数の目安
+EX_HEAD = "なぜ？"
+
+
+def explain_len_guess(text):
+    """声なしのときの解説の画面の長さ（字数から）"""
+    n = len(str(text or "").replace("*", ""))
+    return max(EX_MIN, min(EX_MAX, EX_VOICE0 + n / EX_CPS + 1.2))
+
 
 # ---------- 置き場所（論理座標 720×1280） ----------
 Q_X, Q_Y, Q_W = 52, 168, 540     # 問題文
@@ -57,11 +78,12 @@ class Timeline:
     """1本の動画の時刻表。extra＝カウントダウンから後ろを後ろへずらす秒数。cta＝締めの声を入れるか。
     hook＝版6の掴みを頭に入れるか（入れると、問題の画面から先を HOOK_SHIFT 秒ずらす。start がその時刻）。"""
 
-    def __init__(self, extra=0.0, cta=False, hook=False):
-        self.set(extra, cta, hook)
+    def __init__(self, extra=0.0, cta=False, hook=False, explain=0.0):
+        self.set(extra, cta, hook, explain)
 
-    def set(self, extra, cta, hook=None):
+    def set(self, extra, cta, hook=None, explain=None):
         self.hook = bool(getattr(self, "hook", False) if hook is None else hook)
+        self.explain_len = max(0.0, float(getattr(self, "explain_len", 0.0) if explain is None else explain))
         s = HOOK_SHIFT if self.hook else 0.0
         self.hook0 = HOOK if self.hook else 0.0      # 掴みから問題の画面へ移り始める時刻
         self.start = s                               # 問題の画面（版5の流れの0秒）になる時刻
@@ -72,6 +94,11 @@ class Timeline:
         self.reveal = REVEAL + s + e
         self.trap = TRAP + s + e
         t = TR0 + s + e
+        if self.explain_len:                         # 解説の画面（ひっかけのあと）
+            self.ex0, self.ex1 = t, t + self.explain_len
+            t += self.explain_len
+        else:
+            self.ex0 = self.ex1 = None
         if self.cta:
             self.cta0, self.cta1 = t, t + CTA_LEN
             t += CTA_LEN
@@ -84,10 +111,11 @@ class Timeline:
 
     def times(self):
         """声と BGM に使う時刻（render.py・voice.py・audio.py が読む）"""
-        trap_end = (self.cta0 - 0.05) if self.cta else (self.tr1 - 0.1)
+        trap_end = (self.ex0 - 0.05) if self.explain_len else ((self.cta0 - 0.05) if self.cta else (self.tr1 - 0.1))
         return {"count0": self.count0, "reveal": self.reveal, "ticks": list(self.ticks), "start": self.start,
                 "q": (0.15, self.count0 - 0.1), "ans": (self.reveal + 0.1, self.reveal + 1.0),
                 "trap": (self.reveal + 1.05, trap_end),
+                "explain": (self.ex0 + EX_VOICE0, self.ex1 - EX_TAIL) if self.explain_len else None,
                 "cta": (self.cta0 + 0.05, self.tr1 - 0.05) if self.cta else None}
 
 
@@ -170,7 +198,12 @@ class Look:
         self.voice_credit = ""
         self.seed = zlib.crc32((sc["q1"] + sc.get("q2", "")).encode("utf-8"))
         self.v6 = version_of(theme) >= HOOK_VERSION                 # 版6：1こま目は掴みの画面
-        self.T = Timeline(READ_EXTRA2 if self.n == 2 else 0.0, cta_on(vid, theme), hook=self.v6)
+        ex = theme.get("解説", {}) if isinstance(theme.get("解説"), dict) else {}
+        self.ex_text = str(sc.get("explain", "")).strip() if ex.get("使う") else ""
+        self.ex_basis = str(sc.get("basis", "")).strip() if self.ex_text else ""
+        self.ex_voice = 0.0                                             # 解説の声の長さ（声があれば render.py が入れる）
+        self.T = Timeline(READ_EXTRA2 if self.n == 2 else 0.0, cta_on(vid, theme), hook=self.v6,
+                          explain=explain_len_guess(self.ex_text) if self.ex_text else 0.0)
         self.card_t = [self.T.start + x for x in list(type(self).card_t)[:self.n]]   # 問題の画面になってからの時刻
         self.hook_scene, self.hook_tag, self.hook_prompt = hook_texts(sc, self.words) if self.v6 else ("", "", "")
 
@@ -182,6 +215,90 @@ class Look:
     def retime(self, extra):
         """カウントダウンから後ろを extra 秒だけ後ろへずらす（読み上げの長さに合わせる。掴みの有無はそのまま）"""
         self.T.set(extra, self.T.cta)
+
+    def set_explain(self, voice_sec):
+        """解説の声の長さに合わせて、解説の画面の長さを決め直す（締めの声・転換はその分ずれる）"""
+        if not self.ex_text:
+            return
+        self.ex_voice = float(voice_sec)
+        sec = max(EX_MIN, min(EX_MAX, EX_VOICE0 + self.ex_voice + EX_TAIL + 0.15))
+        self.T.set(self.T.extra, self.T.cta, explain=sec)
+        self._ex_base = None
+
+    # ---------- 解説の画面（どの型も同じ。ひっかけまで見せた画面を暗くし、その上に札を出す） ----------
+    def render_frame(self, t):
+        """書き出す1こま。解説の画面のあいだだけ、解説の札を重ねる（それ以外は型の frame そのまま）"""
+        T = self.T
+        if not self.ex_text or not T.explain_len or t < T.ex0 or t >= T.ex1:
+            return self.frame(t)
+        from PIL import Image
+        if getattr(self, "_ex_base", None) is None:
+            self._ex_base = self.frame(T.ex0 - 0.02).convert("RGBA")   # ひっかけまで見せた画面で止める
+            self._ex_card = self.make_explain_card()
+        cv = self._ex_base.copy()
+        a_in = dk.ease_out(dk.prog(t, T.ex0, T.ex0 + 0.35))
+        a_out = 1.0 - dk.prog(t, T.ex1 - EX_OUT, T.ex1)
+        a = a_in * a_out
+        dim = Image.new("RGBA", cv.size, (6, 10, 22, int(168 * a)))
+        cv.alpha_composite(dim)
+        card, cw, ch, pad, body_y = self._ex_card
+        y = self.ex_top + 26 * (1 - a_in)
+        paste(cv, card, CARD_X - pad, y - pad, alpha=a)
+        # 本文は声に合わせて書いていく（声なしは字数の目安の速さ）
+        dur = self.ex_voice or max(1.0, T.explain_len - EX_VOICE0 - EX_TAIL)
+        frac = dk.prog(t, T.ex0 + EX_VOICE0 - 0.1, T.ex0 + EX_VOICE0 + dur * 0.92)
+        self.write_block(cv, self.ex_tb, self.ex_imgs, CARD_X + 26, y + body_y, max(frac, 0.0001), soft=18, alpha=a)
+        if self.voice_credit:
+            paste(cv, dk.text_sprite(self.voice_credit, (220, 226, 236, 255), "Medium", 15), CX, CREDIT_Y, alpha=a * 0.9, anchor="cc")
+        return cv.convert("RGB")
+
+    def explain_colors(self):
+        """解説の札の色（どの型も読みやすい白い札。強調は themes の「モーション」の色を使う）"""
+        m = {k: rgba(v) for k, v in self.theme.get("色", {}).get("モーション", {}).items()}
+        return {"札": m.get("カード", rgba("#F7F8FB")), "文字": m.get("カードの文字", rgba("#0E1628")),
+                "強調": m.get("カードの強調", rgba("#C2410C")), "見出し": m.get("強調", rgba("#FFC400")),
+                "うすい": rgba("#5B6478")}
+
+    def make_explain_card(self):
+        """解説の札（見出し「なぜ？」・正解・本文の場所・根拠）。本文は render_frame で書いていく"""
+        from PIL import Image
+        c = self.explain_colors()
+        w = CARD_W
+        pad = 30
+        head = dk.text_sprite(self.words.get("解説見出し", EX_HEAD), c["文字"], "Black", 30)
+        ans = dk.text_sprite(self.words.get("正解", "正解は").rstrip("は") + " " + self.letter, c["文字"], "Black", 26)
+        choice = TextBlock([segments(self.sc["abc"[self.correct]], c["文字"], c["強調"])], "Black", w - 52, 2, 40, 28, line_h=1.22)
+        room = CONTENT_BOTTOM - 40 - 210 - (choice.h - 49)              # 本文に使える高さのめやす
+        paras = [segments(p, c["文字"], c["強調"]) for p in self.ex_text.split("\n") if p.strip()]
+        tb = None
+        for px in range(36, 23, -2):
+            tb = TextBlock(paras, "Bold", w - 52, 12, px, px, line_h=1.5, keep_emphasis=True)
+            if tb.fits and tb.h <= room:
+                break
+        self.ex_tb, self.ex_imgs = tb, tb.line_images()
+        basis = ("根拠：" + self.ex_basis) if self.ex_basis else ""
+        bs = dk.text_sprite(basis, c["うすい"], "Medium", 19) if basis else None
+        y_choice = 66
+        body_y = y_choice + choice.h + 26
+        h = body_y + tb.h + (44 if bs is not None else 18)
+        img = Image.new("RGBA", (int((w + pad * 2) * dk.R), int((h + pad * 2) * dk.R)), (0, 0, 0, 0))
+        img.alpha_composite(dk.shadow(w, h, 22, 14, 110), dest=(int((pad - 24) * dk.R), int((pad - 24 + 8) * dk.R)))
+        img.alpha_composite(dk.rrect(w, h, 22, c["札"]), dest=(int((pad - 4) * dk.R), int((pad - 4) * dk.R)))
+        x = pad + 22
+        hw = head.width / dk.R
+        img.alpha_composite(dk.rrect(hw + 28, 48, 24, c["見出し"]), dest=(int((x - 4) * dk.R), int((pad + 10 - 4) * dk.R)))
+        img.alpha_composite(head, dest=(int((x + 14) * dk.R - PAD * dk.R), int((pad + 34) * dk.R - head.height / 2)))
+        ax = x + hw + 44
+        img.alpha_composite(ans, dest=(int(ax * dk.R - PAD * dk.R), int((pad + 34) * dk.R - ans.height / 2)))
+        for k, li in enumerate(choice.line_images()):
+            img.alpha_composite(li, dest=(int((x - PAD) * dk.R), int((pad + y_choice + k * choice.line_h - PAD) * dk.R)))
+        line_y = pad + body_y - 14
+        img.alpha_composite(dk.rrect(w - 44, 2, 1, with_alpha_(c["文字"], 40)), dest=(int((x - 4) * dk.R), int(line_y * dk.R)))
+        if bs is not None:
+            img.alpha_composite(bs, dest=(int((x - PAD) * dk.R), int((pad + h - 34) * dk.R)))
+        # 札を、見出しの下〜CONTENT_BOTTOM の真ん中に置く
+        self.ex_top = max(HOOK_TOP - 10, (HOOK_TOP + CONTENT_BOTTOM) / 2 - h / 2 - 10)
+        return img, w, h, pad, body_y
 
     def q_extra_max(self):
         return Q_EXTRA_MAX2 if self.n == 2 else Q_EXTRA_MAX
