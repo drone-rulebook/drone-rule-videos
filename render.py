@@ -15,6 +15,8 @@
 見た目の版6（themes の「見た目の版」が6以上）：1こま目は掴み（画面の真ん中に大きな場面の1行・問いの札・「AかBで答えてね」）。
   1.2秒で問題の画面へ移り、そこから先は版5の流れを1.5秒ずらしたもの。最後は掴みの画面へ戻る。2択の場面は台本の「タイトル」から取る。
 締めの声（themes の「締めの声を使う」）を入れる動画は、戻る前に「毎日1問」の帯と声が2.0秒入る。
+解説（themes の「解説」→「使う」と「枠」）：台本の列「動画の解説」がある行は、ひっかけのあとに「なぜ？」の画面（解説の札と読み上げ）が入る
+  （約6〜30秒。列「動画の根拠」があれば札の下に出す）。列が空の行は今までと同じ。
 """
 import csv, datetime, hashlib, io, json, os, re, shutil, subprocess, sys, unicodedata, urllib.request, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -37,10 +39,12 @@ def load_config():
 
 
 def load_theme(cfg=None):
+    global _THEME
     cfg = cfg if cfg is not None else load_config()
     name = cfg.get("theme", "drone")
     theme = json.load(open(os.path.join(HERE, "themes", name + ".json"), encoding="utf-8"))
     theme["_name"] = name
+    _THEME = theme
     dk.NO_BREAK_WORDS[:] = theme.get("改行しない言葉", [])
     for k, v in list(theme["文言"].items()):           # 画面に出す文言も、フォントに無い文字を近い字に
         theme["文言"][k], bad = safe_text(v)
@@ -105,6 +109,8 @@ def script_sum(sc):
     2択は、版6の掴みに出すタイトルの場面の部分も入れる（「｜」から後ろの書きかえや、3択のタイトルでは作り直さない）"""
     keys = ("q1", "q2", "a", "b", "c", "answer", "trap")
     vals = [str(sc.get(k, "")) for k in keys]
+    if str(sc.get("explain", "")).strip():          # 解説がある台本だけ、解説と根拠も印に入れる（解説の無い動画の印は今までと同じ）
+        vals += ["explain:" + str(sc["explain"]), "basis:" + str(sc.get("basis", ""))]
     if not str(sc.get("c", "")).strip() and B.title_scene(sc.get("title", "")):
         vals.append(B.title_scene(sc.get("title", "")))
     raw = json.dumps(vals, ensure_ascii=False)
@@ -145,7 +151,15 @@ def plan_voice(look, sc, theme, vcfg):
         out.append((q0, qx))
     else:
         skipped.append("問題")
+    if look.ex_text:                                       # 解説：読み上げの長さに合わせて、解説の画面の長さを決める
+        ex, _ = voice.say([voice.reading(look.ex_text.replace("\n", ""), tbl)], B.EX_MAX - B.EX_VOICE0 - B.EX_TAIL - 0.2, speed, audio.SR)
+        if ex is not None:
+            look.set_explain(len(ex) / audio.SR)
+        else:
+            skipped.append("解説")
     rest, sk = voice.lines(sc, theme["文言"], vcfg, look.T.times(), audio.SR, cta=look.T.cta, question=False)
+    if look.ex_text and look.T.times().get("explain") and look.ex_voice:
+        rest.append((look.T.times()["explain"][0], ex))
     return out + rest, skipped + sk
 
 
@@ -164,6 +178,7 @@ def render(sc, out_path, theme, style, info=None, vid=None):
         else:
             info["声"] = "オン（読み上げの部品が無いので声なし）"
     info["締めの声"] = "あり" if look.T.cta else "なし"
+    info["解説"] = "あり" if look.ex_text else "なし"
     info["長さ"] = look.dur
     times = look.T.times()
     dur = look.dur
@@ -179,7 +194,7 @@ def render(sc, out_path, theme, style, info=None, vid=None):
         p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
         try:
             for i in range(n_frames):
-                p.stdin.write(look.frame(i / FPS).tobytes())
+                p.stdin.write(look.render_frame(i / FPS).tobytes())
         finally:
             p.stdin.close()
         if p.wait() != 0:
@@ -247,6 +262,26 @@ def write_status(st):
         json.dump(st, f, ensure_ascii=False, indent=1)
         f.write("\n")
 
+def explain_of(r, theme=None):
+    """CSV の1行 → (解説, 根拠)。themes の「解説」が使うで、行の枠（空なら「18時」）が「枠」にあるときだけ。
+    フォントに無い文字があれば、解説は使わない（動画は解説なしで作る）"""
+    theme = theme if theme is not None else (_THEME or {})
+    ex = theme.get("解説", {}) if isinstance(theme.get("解説"), dict) else {}
+    slot = str(r.get("枠", "") or "").strip() or "18時"
+    text = str(r.get("動画の解説", "") or "").strip()
+    if not (ex.get("使う") and text and slot in (ex.get("枠") or ["18時"])):
+        return "", ""
+    text, bad = safe_text(text)
+    basis, bad_b = safe_text(str(r.get("動画の根拠", "") or "").strip())
+    if bad or bad_b:
+        print("注意：解説か根拠にフォントに無い文字があるので、解説なしで作ります：", "".join(sorted(set(bad + bad_b))))
+        return "", ""
+    return text[:400], basis[:60]
+
+
+_THEME = None
+
+
 def script_of(r):
     """CSV の1行 → 台本（足りなければ None と理由）。
     タイトル（title）は版6の掴みに使う（2択の場面）。フォントに無い文字がタイトルの場面の部分にあれば、タイトルは使わない
@@ -262,6 +297,7 @@ def script_of(r):
         sc[k], b = safe_text(sc[k]); bad += b
     if bad:
         return None, "使えない文字：" + "".join(sorted(set(bad)))
+    sc["explain"], sc["basis"] = explain_of(r)
     sc["title"], bad_t = safe_text(sc["title"])
     if bad_t and any(ch in B.title_scene(sc["title"]) for ch in bad_t):
         print("注意：タイトルの場面にフォントに無い文字があるので、掴みは問題1行目から作ります：", "".join(sorted(set(bad_t))))
@@ -387,7 +423,9 @@ def sheet_times(look):
     if T.hook:
         ts.append((T.start + 0.1, "問題の画面"))
     ts += [(T.start + 1.4, "3択"), (T.count0 + 1.2, "カウントダウン"), (T.reveal + 0.45, "正解"),
-           (min(T.trap + 1.7, (T.cta0 or T.tr0) - 0.1), "ひっかけ")]
+           (min(T.trap + 1.7, (T.ex0 or T.cta0 or T.tr0) - 0.1), "ひっかけ")]
+    if T.explain_len:
+        ts += [(T.ex0 + 1.2, "解説（書き始め）"), (T.ex1 - B.EX_TAIL - 0.1, "解説（読み終わり）")]
     if T.cta:
         ts.append((T.cta0 + 1.1, "締めの声"))
     ts += [(T.sw, "転換"), (T.dur - 1.0 / FPS, "最後")]
@@ -405,7 +443,7 @@ def contact_sheet(sc, theme, style, path, guides=False, vid=None):
     d = ImageDraw.Draw(sheet)
     f = dk.font("Bold", 22 / dk.R)
     for k, (t, name) in enumerate(SHEET_T):
-        fr = look.frame(t).resize((tw, th), Image.LANCZOS)
+        fr = look.render_frame(t).resize((tw, th), Image.LANCZOS)
         if guides:
             ov = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
             od = ImageDraw.Draw(ov)
